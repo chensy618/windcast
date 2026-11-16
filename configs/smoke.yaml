@@ -1,0 +1,16 @@
+# Smoke test on the first days of 2018 (only for checking the pipeline end to end).
+data:
+  root: /cluster/work/projects/nn8106k/siyan/windcast
+  stats: /cluster/work/projects/nn8106k/siyan/windcast/stats_smoke.json
+  inits: [0, 12]
+  leads: [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66]
+split:
+  train: [2018-01-01, 2018-01-08]
+  val: [2018-01-09, 2018-01-12]
+  test: [2018-01-09, 2018-01-12]
+model: {name: fno, width: 32, modes: 16, layers: 4}
+loss: {huber_delta: 1.0}
+train: {epochs: 2, samples_per_epoch: 64, batch: 4, lr: 1.0e-3, weight_decay: 1.0e-4,
+        workers: 8, val_stride: 1, amp: true, seed: 0}
+paths:
+  runs: /cluster/work/projects/nn8106k/siyan/windcast/runs_smoke

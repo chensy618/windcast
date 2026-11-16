@@ -1,0 +1,34 @@
+# F1: MEPS forecast + terrain -> operator -> 1 km MET Nordic (u10 v10 t2m rh2m msl tcc),
+# leads 0-66 h, Tromsø–Senja (314 x 343 km reference grid).
+data:
+  root: /cluster/work/projects/nn8106k/siyan/windcast
+  inits: [0, 12]
+  leads: [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66]
+
+split:                     # by init time
+  train: [2018-01-01, 2021-12-31]
+  val: [2022-01-01, 2022-12-31]
+  test: [2023-01-01, 2023-12-31]
+
+model:
+  name: fno                # unet | fno | ufno
+  width: 64
+  modes: 32
+  layers: 4
+
+loss:
+  huber_delta: 1.0         # on the residual normalised by its train std
+
+train:
+  epochs: 40
+  samples_per_epoch: 8000
+  batch: 8
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  workers: 14
+  val_stride: 4            # every 4th validation sample during training
+  amp: true
+  seed: 0
+
+paths:
+  runs: /cluster/work/projects/nn8106k/siyan/windcast/runs

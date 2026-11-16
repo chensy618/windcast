@@ -1,0 +1,77 @@
+#!/bin/bash
+#SBATCH --job-name=wc-download
+#SBATCH --account=nn8106k
+#SBATCH --partition=accel
+#SBATCH --gres=gpu:1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=24:00:00
+#SBATCH --output=/cluster/work/projects/nn8106k/siyan/windcast/logs/download_%j.out
+# All windcast downloads in one GPU job (accel nodes reach the internet through the uan03
+# proxy). One stream per archive: thredds (MEPS, MET Nordic) and the ECMWF GCS mirror
+# rate-limit, and the proxy keeps the login node's address. Every downloader skips what is
+# already on disk, so a stream that has not printed "done:" when the job ends is resumed by
+# a resubmitted job, at most MAX_RESUBMIT times.
+#   sbatch slurm/download.slurm            # all streams
+#   sbatch slurm/download.slurm meps ifs   # some streams
+set -uo pipefail
+ulimit -c 0
+REPO=/cluster/home/siyan/github/windcast
+PY=/cluster/projects/nn8106k/siyan/envs/wfno-arm312/bin/python
+W=/cluster/work/projects/nn8106k/siyan/windcast
+MAX_RESUBMIT=${MAX_RESUBMIT:-5}
+N=${RESUBMIT_COUNT:-0}
+cd "$REPO"
+export PYTHONPATH="$REPO" OMP_NUM_THREADS=1
+STREAMS=("$@")
+[ ${#STREAMS[@]} -eq 0 ] && STREAMS=(meps metnordic ifs aifs)
+
+declare -A CMD LOG
+CMD[meps]="scripts/download_meps.py --start 2018-01-01 --end 2025-12-31"
+LOG[meps]=$W/meps/logs/dl_all.log
+CMD[metnordic]="scripts/download_metnordic.py --start 2018-01-01 --end 2025-12-31"
+LOG[metnordic]=$W/metnordic/logs/dl_all.log
+CMD[ifs]="scripts/download_ecmwf.py --model ifs --start 2023-07-12 --end 2025-12-31"
+LOG[ifs]=$W/ecmwf/logs/dl_ifs.log
+CMD[aifs]="scripts/download_ecmwf.py --model aifs --start 2024-03-01 --end 2025-12-31"
+LOG[aifs]=$W/ecmwf/logs/dl_aifs.log
+
+echo "job $SLURM_JOB_ID on $(hostname), streams: ${STREAMS[*]}, resubmit $N/$MAX_RESUBMIT"
+declare -A PID
+for s in "${STREAMS[@]}"; do
+  mkdir -p "$(dirname "${LOG[$s]}")"
+  echo "=== job $SLURM_JOB_ID $(date -Is) start" >> "${LOG[$s]}"
+  $PY -u ${CMD[$s]} >> "${LOG[$s]}" 2>&1 &
+  PID[$s]=$!
+done
+
+# stop the streams a few minutes before the time limit, so the resubmission happens here
+END=$(( $(date +%s) + $(squeue -h -j "$SLURM_JOB_ID" -o %L | awk -F'[-:]' '{ if (NF==4) print ($1*86400+$2*3600+$3*60+$4); else if (NF==3) print ($1*3600+$2*60+$3); else print ($1*60+$2) }') - 600 ))
+while :; do
+  alive=0
+  for s in "${STREAMS[@]}"; do kill -0 "${PID[$s]}" 2>/dev/null && alive=1; done
+  [ $alive -eq 0 ] && break
+  if [ "$(date +%s)" -ge "$END" ]; then
+    echo "$(date -Is) time limit near, stopping streams"
+    for s in "${STREAMS[@]}"; do kill "${PID[$s]}" 2>/dev/null; done
+    sleep 30
+    break
+  fi
+  sleep 60
+done
+
+left=()
+for s in "${STREAMS[@]}"; do
+  last=$(grep -E "^done:|^=== job" "${LOG[$s]}" | tail -n 1)
+  echo "$s: ${last:-no output}"
+  [[ "$last" == done:* ]] || left+=("$s")
+done
+if [ ${#left[@]} -gt 0 ] && [ "$N" -lt "$MAX_RESUBMIT" ]; then
+  echo "resubmitting for: ${left[*]}"
+  RESUBMIT_COUNT=$((N + 1)) MAX_RESUBMIT=$MAX_RESUBMIT sbatch --export=ALL "$REPO/slurm/download.slurm" "${left[@]}"
+elif [ ${#left[@]} -gt 0 ]; then
+  echo "not finished after $MAX_RESUBMIT resubmissions: ${left[*]}"
+else
+  echo "all streams done"
+fi
