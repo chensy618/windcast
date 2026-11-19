@@ -121,6 +121,13 @@ def load_inputs(group, D, init, cells):
                 dist, idx = tree.query(C.xy)
                 w[:, :, k, 0], w[:, :, k, 1] = u[:, idx], v[:, idx]
                 w[:, dist > 2.0, k] = np.nan
+        # MEPS and AROME-Arctic (both 2.5 km AROME): where one has no cell (AROME-Arctic ends near
+        # 63 N), use the other, so that the nwp-* forecasts cover the whole map
+        lam = [k for k, m in enumerate(GROUPS[group]) if m in native]
+        if len(lam) == 2:
+            for a_, b_ in (lam, lam[::-1]):
+                miss = np.isnan(w[0, :, a_, 0])
+                w[:, miss, a_] = w[:, miss, b_]
         out[key] = w
     return torch.tensor((grid.reshape(L, -1, D.H, D.W) - D.g_mean) / D.g_std, device=dev), out
 
@@ -289,6 +296,14 @@ def main():
                              lon=round(float(base_npz["lon_st"][n]), 4), masl=float(base_npz["masl"][n]),
                              i=int(H1 - 1 - ij[n, 0]), j=int(ij[n, 1]), fc=fc))
     stations.sort(key=lambda s: s["name"])
+    old_f = run_dir / "forecast.json"
+    if old_f.exists():                       # keep the configurations of an earlier call for this run
+        old = json.loads(old_f.read_text())
+        if old["leads"] == leads:
+            prev = {s_["id"]: s_["fc"] for s_ in old["stations"]}
+            for s_ in stations:
+                s_["fc"] = {**prev.get(s_["id"], {}), **s_["fc"]}
+            configs = {**old["configs"], **configs}
     out = dict(init=init.strftime("%Y-%m-%dT%H:00Z"), run=f"{init:%Y%m%dT%H}", leads=leads,
                valid=[(init + pd.Timedelta(hours=ld)).strftime("%Y-%m-%dT%H:00Z") for ld in leads],
                configs=configs, stations=stations,

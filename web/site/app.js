@@ -393,8 +393,14 @@ function initMap() {
 const Z = { full: false, z: 1, tx: 0, ty: 0, drag: null, dragged: false, pts: new Map(), pinch: null, sharpen: 0 };
 function fitInner() {
   const inner = $("map-inner"), box = $("map");
-  if (!Z.full) { inner.style.cssText = ""; return; }
   const bw = box.clientWidth, bh = box.clientHeight, ar = S.grid ? S.grid.width / S.grid.height : 964 / 1033;
+  if (!Z.full) {                                        // page view: fill the width, crop top and bottom evenly
+    const w = bw, h = w / ar;
+    inner.style.width = w + "px"; inner.style.height = h + "px";
+    inner.style.left = "0px"; inner.style.top = (bh - h) / 2 + "px";
+    inner.style.transform = ""; inner.style.setProperty("--z", 1);
+    return;
+  }
   const w = Math.min(bw, bh * ar), h = w / ar;
   inner.style.width = w + "px"; inner.style.height = h + "px";
   inner.style.left = (bw - w) / 2 + "px"; inner.style.top = (bh - h) / 2 + "px";
@@ -572,6 +578,8 @@ function noteModel() {
   const c = S.F.configs[S.cfg], ch = meanChange(S.cfg);
   $("model-note").textContent = (ch != null ? `${Math.abs(ch).toFixed(1)} % lower error than IFS + AIFS. ` : "") +
     (c.coverage < 0.99 ? `Covers ${Math.round(c.coverage * 100)} % of the map (the MEPS area).` : "");
+  $("scale-note").hidden = c.coverage >= 0.99;
+  $("scale-note").textContent = "No forecast from this model (outside the MEPS area)";
 }
 async function setModel(cfg) {
   S.cfg = cfg; store.set("wc-model", cfg); noteModel();
@@ -621,7 +629,7 @@ function show(v) {
   for (const n of VIEWS) { $("view-" + n).hidden = n !== v; $("tab-" + n).setAttribute("aria-selected", n === v); }
   if (v !== "map") { stop(); stopParticles(); }
   if (v === "graph") renderGraph();
-  if (v === "map") { sizeParticles(); drawMap(); drawMarks(); }
+  if (v === "map") { fitInner(); sizeParticles(); drawMap(); drawMarks(); }
 }
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => { location.hash = b.dataset.view; }));
 window.addEventListener("hashchange", () => { const v = location.hash.slice(1); if (VIEWS.includes(v)) show(v); });

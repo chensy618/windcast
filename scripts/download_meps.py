@@ -59,6 +59,9 @@ def use_model(name):
 # y -299..364 km on the windcast.geo plane) + 50 km; contains the 1 km Tromsø–Senja grid.
 # About 333 x 378 MEPS cells on both MEPS grids (checked: inside, off the grid edges).
 WIN_KM = (-424, 464, -349, 414)
+# --window grid: the whole 1 km grid of static/terrain_descriptors_1km.npz (x -591..448, y -579..524 km)
+# + 10 km, for the website forecasts (the NWP configurations then cover the whole map)
+WINDOWS = {"north": WIN_KM, "grid": (-601, 458, -589, 534)}
 VARS = {  # output name: MEPS variable (any extra level / member dims: index 0)
     "u10": "x_wind_10m", "v10": "y_wind_10m", "fg10": "wind_speed_of_gust",
     "t2m": "air_temperature_2m", "rh2m": "relative_humidity_2m",
@@ -194,7 +197,7 @@ def with_timeout(fn, args, timeout: float = 180.0):
 
 
 def main():
-    global VARS
+    global VARS, WIN_KM
     p = argparse.ArgumentParser()
     p.add_argument("--start", default="2018-01-01")
     p.add_argument("--end", default="2025-12-31")
@@ -204,11 +207,14 @@ def main():
     p.add_argument("--leads", type=int, nargs="+", default=list(range(0, 13)) + list(range(18, 67, 6)))
     p.add_argument("--model", default="meps", choices=["meps"] + list(OTHER))
     p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--window", default="north", choices=list(WINDOWS),
+                   help="north: Northern Norway (training samples); grid: the whole 1 km map (website)")
     p.add_argument("--timeout", type=float, default=180.0, help="seconds per run before an attempt is abandoned")
     p.add_argument("--vars", nargs="+", default=None, choices=list(VARS),
                    help="subset of the output variables (e.g. u10 v10 t2m msl for the hourly samples)")
     a = p.parse_args()
     use_model(a.model)
+    WIN_KM = WINDOWS[a.window]
     if a.vars:
         VARS = {k: VARS[k] for k in a.vars}
     a.out = a.out or OUT
