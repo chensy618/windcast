@@ -1,4 +1,4 @@
-# Windcast Nord website
+# Windcast website
 
 A static website with the 1 km 10 m wind forecast for Northern Norway: a table, a graph and a
 playable map (2D, or 3D with three.js), for every model configuration. The site is plain

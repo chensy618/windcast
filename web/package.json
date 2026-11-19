@@ -1,7 +1,7 @@
 {
-  "name": "windcast-nord-web",
+  "name": "windcast-web",
   "private": true,
-  "description": "Static website of the Windcast Nord 1 km wind forecast (see README.md).",
+  "description": "Static website of the Windcast 1 km wind forecast (see README.md).",
   "type": "module",
   "scripts": {
     "start": "node serve.mjs 8000"

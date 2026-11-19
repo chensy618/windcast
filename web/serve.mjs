@@ -23,4 +23,4 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
   }
-}).listen(PORT, () => console.log(`Windcast Nord: http://localhost:${PORT}  (serving ${ROOT})`));
+}).listen(PORT, () => console.log(`Windcast: http://localhost:${PORT}  (serving ${ROOT})`));

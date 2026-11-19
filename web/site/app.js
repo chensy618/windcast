@@ -1,4 +1,4 @@
-/* Windcast Nord: static front end. Reads data/ written by web/pipeline (see web/README.md).
+/* Windcast: static front end. Reads data/ written by web/pipeline (see web/README.md).
    The models give the wind every 6 h; the page interpolates it to every hour (u and v linearly in
    time), which keeps the held-out skill (web/README.md). */
 (() => {
