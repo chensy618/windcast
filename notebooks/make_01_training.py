@@ -83,10 +83,12 @@ plt.tight_layout()
 md(r"""
 ## 2 · Loss curves of the six website models
 
-All at learning rate $10^{-5}$. Thin lines are the 15 runs, the thick line is their mean; the
-dotted line is no correction. The **training** curve is on the four training groups, the
-**validation** curve on the held-out group, both in the respective period, so their levels are not
-comparable with each other; what matters is how far each lies below its no-correction line.
+All at learning rate $10^{-5}$. First the loss $\mathcal L$ exactly as it is logged during
+training. Thin lines are the 15 runs, the thick line is their mean; the dotted line is the loss of
+no correction ($\hat{\mathbf y} = 0$, i.e. $\overline{\lVert\mathbf y\rVert^2}/\sigma_y^2$). The
+**training** curve is on the four training groups, the **validation** curve on the held-out group,
+both in the respective period, so their levels are not comparable with each other; what matters is
+how far each lies below its no-correction line.
 """)
 
 code(r"""
@@ -119,6 +121,34 @@ WEB = [('MLP · IFS + AIFS', 'point_terrain_g{k}_s{s}_lr1e-05', 'ecmwf'),
        ('FNO + MLP · four models', 'fno_terrain_g{k}_s{s}_nwp_lr1e-05', 'nwp')]
 H = {lab: curves(p, g) for lab, p, g in WEB}
 
+def loss_panels(axs, H, ylabel):
+    for ax, (lab, h) in zip(axs.flat, H.items()):
+        ep = np.arange(len(h.train[0]))
+        for key, col, name in (('train', '#e67e22', 'training'), ('val', '#0b6aa2', 'validation')):
+            a = np.stack(h[key])
+            ax.plot(ep, a.T, color=col, lw=.5, alpha=.25)
+            ax.plot(ep, a.mean(0), color=col, lw=2.2, label=name)
+        s = SAMPLE['nwp' if 'four models' in lab else 'ecmwf'].y_std
+        ax.axhline(np.mean((h.nc_train / s) ** 2), color='#e67e22', ls=':', lw=1.2)
+        ax.axhline(np.mean((h.nc_val / s) ** 2), color='#0b6aa2', ls=':', lw=1.2)
+        ax.set_title(lab, fontsize=10)
+    for ax in axs[:, 0]: ax.set_ylabel(ylabel)
+    for ax in axs[-1]: ax.set_xlabel('epoch')
+    axs[0, 0].legend(loc='upper right', fontsize=8)
+
+fig, axs = plt.subplots(2, 3, figsize=(13, 7), sharex=True, sharey=True)
+loss_panels(axs, H, 'loss  (normalised squared vector error)')
+plt.tight_layout()
+""")
+
+md(r"""
+The same curves converted to the vector RMSE of the corrected wind, $\sigma_y\sqrt{\mathcal L}$ in m/s
+($\sigma_y$ = 2.80 m/s for IFS + AIFS, 2.60 m/s for the four models). The conversion is monotonic,
+so the shape of every curve and the epoch of its minimum are the same as above; the RMSE has a unit,
+and the two input groups (different $\sigma_y$) can be compared.
+""")
+
+code(r"""
 fig, axs = plt.subplots(2, 3, figsize=(13, 7), sharex=True, sharey=True)
 for ax, (lab, h) in zip(axs.flat, H.items()):
     ep = np.arange(len(h.train_rmse[0]))
@@ -169,9 +199,10 @@ md(r"""
 ## 3 · Learning rate
 
 The same model at different peak learning rates (one-cycle schedule: the rate rises to the peak
-over the first 30 % of the steps and then decays to almost zero). Left the training change, right
-the validation change; mean over the runs (15 runs at $10^{-3}$, $3\cdot10^{-5}$ and $10^{-5}$ for
-SFNO, 5 runs = seed 0 otherwise).
+over the first 30 % of the steps and then decays to almost zero). Mean over the runs (15 runs at
+$10^{-3}$, $3\cdot10^{-5}$ and $10^{-5}$ for SFNO, 5 runs = seed 0 otherwise). First the raw loss
+(logarithmic axis for training: at $10^{-3}$ the training loss falls by an order of magnitude), then
+the change against no correction.
 """)
 
 code(r"""
@@ -182,6 +213,23 @@ LR = {'SFNO + MLP': {1e-3: 'sfno_terrain_g{k}_s{s}', 1e-4: 'sfno_terrain_g{k}_s{
 LRC = {1e-3: '#c0392b', 1e-4: '#e67e22', 3e-5: '#2a9d8f', 1e-5: '#0b6aa2'}
 HL = {(m, lr): curves(p) for m, d in LR.items() for lr, p in d.items()}
 
+fig, axs = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
+for row, m in zip(axs, LR):
+    for lr in LR[m]:
+        h = HL[(m, lr)]
+        for a, key in zip(row, ('train', 'val')):
+            a.plot(np.stack(h[key]).mean(0), color=LRC[lr], lw=2, label=f'{lr:g} ({len(h)} runs)')
+    nc = HL[(m, 1e-5)]
+    row[0].axhline(np.mean((nc.nc_train / sc.ecmwf.y_std) ** 2), color='0.4', ls=':', lw=1.2)
+    row[1].axhline(np.mean((nc.nc_val / sc.ecmwf.y_std) ** 2), color='0.4', ls=':', lw=1.2)
+    row[0].set_ylabel(f'{m}\nloss'); row[0].set_yscale('log')
+    row[1].legend(title='peak learning rate', fontsize=8)
+axs[0, 0].set_title('training loss (dotted: no correction)'); axs[0, 1].set_title('validation loss')
+for a in axs[-1]: a.set_xlabel('epoch')
+plt.tight_layout()
+""")
+
+code(r"""
 fig, axs = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
 for row, m in zip(axs, LR):
     for lr in LR[m]:
