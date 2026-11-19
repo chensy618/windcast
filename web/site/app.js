@@ -19,6 +19,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } },
 };
 const getJSON = async p => { const r = await fetch(DATA + p, { cache: "no-cache" }); if (!r.ok) throw new Error(p + ": " + r.status); return r.json(); };
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const fmt = v => (v == null || !isFinite(v)) ? "–" : v.toFixed(1);
 const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const D2R = Math.PI / 180;
@@ -33,7 +34,7 @@ const PLACES = [["Tromsø", 69.649, 18.956], ["Bodø", 67.280, 14.405], ["Narvik
   ["Karasjok", 69.472, 25.511], ["Andenes", 69.316, 16.119], ["Sortland", 68.697, 15.414], ["Honningsvåg", 70.982, 25.970]];
 
 const S = { grid: null, verif: null, index: null, F: null, obs: {}, hours: [], times: [], cfg: null, pix: {}, loc: null,
-            view: "table", dim: "2d", hour: 0, playing: null };
+            view: "table", dim: "2d", hour: 0, playing: null, verifScope: store.get("wc-verif") || "station" };
 
 // arrow pointing where the wind blows to (direction "from" + 180)
 function arrowSvg(dir, cls = "arrow", color = "currentColor") {
@@ -151,7 +152,7 @@ function renderAll() {
   const warn = $("loc-warn");
   warn.hidden = !(S.loc.far > 50);
   warn.textContent = "This place is far from every station the models learned from, so the correction is less certain here.";
-  renderNow(); renderTable();
+  renderNow(); renderTable(); renderVerif();
   if (S.view === "graph") renderGraph();
   if (S.view === "map") drawMarks();
 }
@@ -613,14 +614,27 @@ async function setModel(cfg) {
 }
 function renderVerif() {
   const v = S.verif; if (!v) return;
-  const rows = [["IFS + AIFS mean (reference)", null, v.rmse_reference]];
-  for (const c of ORDER) if (v.configs[c]) rows.push([(S.F.configs[c] || { label: c }).label, c, v.configs[c].rmse]);
-  const mean = a => a.reduce((s, x) => s + x, 0) / a.length, ref = mean(v.rmse_reference);
-  const lo = Math.min(...rows.map(r => mean(r[2]))) * 0.97;
-  $("verif").innerHTML = `<div class="tbl"><table class="vt"><thead><tr><th>Model</th><th class="num">RMSE</th><th class="num">Change</th><th></th></tr></thead><tbody>` +
-    rows.map(([lab, c, r]) => { const m = mean(r), ch = (m / ref - 1) * 100;
-      return `<tr class="${c === S.cfg ? "sel" : ""}"><td>${lab}</td><td class="num">${m.toFixed(2)} m/s</td><td class="num">${c ? ch.toFixed(1) + " %" : "–"}</td><td><span class="bar${c ? "" : " ref"}" style="width:${Math.max(2, (m - lo) / (ref * 1.03 - lo) * 90)}px"></span></td></tr>`; }).join("") +
-    `</tbody></table></div><p class="hint">Mean over forecast times 0 to 66 h, ${v.n_stations} stations, ${v.period}. Each station is predicted by models trained without it. The hourly values between the 6-hourly model times are interpolated; they keep almost all of the improvement.</p>`;
+  const mean = a => a.reduce((s, x) => s + x, 0) / a.length;
+  const st = S.loc && S.loc.kind === "station" && v.stations ? v.stations[S.loc.id] : null;
+  const one = st && S.verifScope !== "all";              // this station's numbers
+  const rows = [["IFS + AIFS mean (reference)", null, one ? st.reference : mean(v.rmse_reference)]];
+  for (const c of ORDER) if (v.configs[c]) rows.push([(S.F.configs[c] || { label: c }).label, c, one ? st[c] : mean(v.configs[c].rmse)]);
+  const ref = rows[0][2], ok = rows.filter(r => r[2] != null);
+  const lo = Math.min(...ok.map(r => r[2])) * 0.97, hi = Math.max(...ok.map(r => r[2]), ref * 1.03);
+  const seg = st ? `<div class="seg verif-scope" role="group" aria-label="Which stations">` +
+    `<button type="button" data-scope="station" aria-pressed="${one}">${esc(S.loc.name)}</button>` +
+    `<button type="button" data-scope="all" aria-pressed="${!one}">All ${v.n_stations} stations</button></div>` : "";
+  const note = one
+    ? `Mean over forecast times 0 to 66 h at ${esc(S.loc.name)}, ${v.period}, ${st.n.toLocaleString("en-GB")} observations. Predicted by the models trained without this station. One station is a small sample: differences of a few per cent are within the noise.`
+    : `Mean over forecast times 0 to 66 h, ${v.n_stations} stations, ${v.period}. Each station is predicted by models trained without it. The hourly values between the 6-hourly model times are interpolated; they keep almost all of the improvement.` +
+      (S.loc && S.loc.kind !== "station" ? " Choose a station to see its own numbers." : "");
+  $("verif").innerHTML = seg + `<div class="tbl"><table class="vt"><thead><tr><th>Model</th><th class="num">RMSE</th><th class="num">Change</th><th></th></tr></thead><tbody>` +
+    rows.map(([lab, c, m]) => { if (m == null) return `<tr><td>${lab}</td><td class="num">–</td><td class="num">–</td><td></td></tr>`;
+      const ch = (m / ref - 1) * 100;
+      return `<tr class="${c === S.cfg ? "sel" : ""}"><td>${lab}</td><td class="num">${m.toFixed(2)} m/s</td><td class="num">${c ? (ch > 0 ? "+" : "") + ch.toFixed(1) + " %" : "–"}</td><td><span class="bar${c ? "" : " ref"}" style="width:${Math.max(2, (m - lo) / (hi - lo) * 90)}px"></span></td></tr>`; }).join("") +
+    `</tbody></table></div><p class="hint">${note}</p>`;
+  for (const b of $("verif").querySelectorAll("[data-scope]"))
+    b.addEventListener("click", () => { S.verifScope = b.dataset.scope; store.set("wc-verif", S.verifScope); renderVerif(); });
 }
 async function loadRun(run) {
   stop();

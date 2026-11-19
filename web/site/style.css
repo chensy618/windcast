@@ -89,6 +89,8 @@ svg text { fill: var(--muted); font: 11px var(--font-body); }
 .seg button { font: 500 .85rem var(--font-body); background: var(--panel); color: var(--fg); border: 0; padding: 7px 12px; cursor: pointer; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--panel); }
+.verif-scope { margin-bottom: 10px; max-width: 100%; }
+.verif-scope button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .play { flex: none; width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--accent); cursor: pointer; display: grid; place-items: center; }
 .play svg { width: 16px; height: 16px; fill: var(--panel); }

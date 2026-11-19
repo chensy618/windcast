@@ -6,6 +6,8 @@ Test period 2025-04-01 .. 2025-09-12, runs present in both the ECMWF and the NWP
 station is predicted by the models that did not see its station group (3 seeds, mean RMSE).
 Vector RMSE of (u, v) against the observations; change in % against the IFS + AIFS mean (negative
 = better). Also the uncorrected NWP 4-model mean.
+Per station ("stations"): the same RMSE at each station alone, mean over the leads, with the number
+of observations it rests on (the panel's "This station" view).
 
 OUT/static/verification.json
 """
@@ -41,6 +43,16 @@ def main():
         m = te[:, None, None] & np.isfinite(obs[..., 0]) & np.isfinite(p[..., 0])
         return np.array([np.sqrt(((obs[:, j] - p[:, j]) ** 2).sum(-1)[m[:, j]].mean()) for j in range(len(leads))])
 
+    def rmse_st(p):                                  # (stations,): per-lead RMSE at each station, mean over leads
+        m = te[:, None, None] & np.isfinite(obs[..., 0]) & np.isfinite(p[..., 0])
+        se = np.where(m, ((obs - p) ** 2).sum(-1), 0.0)
+        n = m.sum(0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.sqrt(se.sum(0) / n).mean(0), n.sum(0)
+
+    st_ids = [str(x) for x in e["station"]]
+    s0, n0 = rmse_st(base["ecmwf"])
+    per_st = {"reference": s0}
     r0 = rmse(base["ecmwf"])
     out = {"leads": leads, "period": "2025-04-01 to 2025-09-12", "n_stations": int(len(groups)),
            "reference": "IFS + AIFS mean", "rmse_reference": r0.round(3).tolist(), "configs": {}}
@@ -48,16 +60,21 @@ def main():
     out["configs"]["nwp-raw"] = dict(rmse=rn.round(3).tolist(), change_pct=((rn / r0 - 1) * 100).round(2).tolist())
     for g in ("ecmwf", "nwp"):
         for h, name in (("sfno", "sfno"), ("fno", "fno"), ("point", "mlp")):
-            rs = []
+            rs, ss = [], []
             for s in range(3):
                 acc = np.full_like(base[g], np.nan)
                 for k in range(5):
                     p = ROOT / "runs_a1" / f"{h}_terrain_g{k}_s{s}{'_nwp' if g == 'nwp' else ''}_lr1e-05" / "pred.npz"
                     acc[:, :, groups == k] = np.load(p)["test"][:, :, groups == k]
                 rs.append(rmse(base[g] + acc))
+                ss.append(rmse_st(base[g] + acc)[0])
             r = np.mean(rs, 0)
+            per_st[f"{g}-{name}"] = np.mean(ss, 0)
             out["configs"][f"{g}-{name}"] = dict(rmse=r.round(3).tolist(), change_pct=((r / r0 - 1) * 100).round(2).tolist())
             print(f"{g}-{name}: mean change {np.mean((r / r0 - 1) * 100):.2f} %")
+    out["stations"] = {sid: dict(n=int(n0[i]), **{c: (round(float(v[i]), 3) if np.isfinite(v[i]) else None)
+                                                   for c, v in per_st.items()})
+                       for i, sid in enumerate(st_ids) if n0[i] > 0}
     (a.out / "static").mkdir(parents=True, exist_ok=True)
     (a.out / "static" / "verification.json").write_text(json.dumps(out, separators=(",", ":")))
 
