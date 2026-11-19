@@ -46,9 +46,10 @@ def download(init):
         sh("scripts/download_ecmwf.py", "--model", m, "--start", d, "--end", d, "--inits", h)
     sh("scripts/download_gfs.py", "--start", d, "--end", d, "--inits", h)
     # the whole 1 km map (--window grid), so that the NWP configurations cover all of it
-    sh("scripts/download_meps.py", "--start", d, "--end", d, "--inits", h, "--leads", *LEADS6, "--window", "grid")
+    sh("scripts/download_meps.py", "--start", d, "--end", d, "--inits", h, "--leads", *LEADS6, "--window", "grid",
+       "--max-wait-h", "1")
     sh("scripts/download_meps.py", "--model", "arome_arctic", "--start", d, "--end", d, "--inits", h, "--leads", *LEADS6,
-       "--window", "grid")
+       "--window", "grid", "--max-wait-h", "1")
     return {g: all(group_path(m, init).exists() for m in ms) for g, ms in GROUPS.items()}
 
 

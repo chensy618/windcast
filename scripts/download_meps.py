@@ -39,6 +39,7 @@ LCC_LON0, LCC_N = 15.0, np.sin(np.deg2rad(63.0))  # MEPS Lambert, tangent at 63N
 OUT = Path("/cluster/work/projects/nn8106k/siyan/windcast/meps")
 PREFIX = "meps"
 GRID_DATES = (date(2018, 1, 1), date(2023, 1, 1))  # one run on each MEPS grid
+PROBE = BASE.format(d=date(2024, 6, 16)) + "meps_det_sfc_20240616T00Z.ncml"  # known to exist
 # other 2.5 km MET Norway models with the MEPS variable names: urls, Lambert (lon0, n), out
 OTHER = {"arome_arctic": dict(
     urls=["https://thredds.met.no/thredds/dodsC/aromearcticarchive/{d:%Y/%m/%d}/"
@@ -46,15 +47,18 @@ OTHER = {"arome_arctic": dict(
           "https://thredds.met.no/thredds/dodsC/aromearcticlatest/latest/"
           "arome_arctic_det_2_5km_{d:%Y%m%d}T{h:02d}Z.ncml"],
     lcc=(-25.0, np.sin(np.deg2rad(77.5))), grid_dates=(date(2024, 3, 1),),
+    probe="https://thredds.met.no/thredds/dodsC/aromearcticarchive/2025/05/11/"
+          "arome_arctic_det_2_5km_20250511T00Z.nc",
     out=Path("/cluster/work/projects/nn8106k/siyan/windcast/arome_arctic"))}
 
 
 def use_model(name):
-    global URLS, LCC_LON0, LCC_N, OUT, PREFIX, GRID_DATES
+    global URLS, LCC_LON0, LCC_N, OUT, PREFIX, GRID_DATES, PROBE
     if name == "meps":
         return
     m = OTHER[name]
     URLS, (LCC_LON0, LCC_N), OUT, PREFIX, GRID_DATES = m["urls"], m["lcc"], m["out"], name, m["grid_dates"]
+    PROBE = m["probe"]
 # Northern Norway (Nordland, Troms, Finnmark: the 113 Frost stations span x -374..414,
 # y -299..364 km on the windcast.geo plane) + 50 km; contains the 1 km Tromsø–Senja grid.
 # About 333 x 378 MEPS cells on both MEPS grids (checked: inside, off the grid edges).
@@ -87,13 +91,40 @@ def rotate(ux, uy, lon):
 
 
 def open_run(d: date, h: int):
-    err = None
+    errs = []
     for u in URLS:
         try:
             return netCDF4.Dataset(u.format(d=d, h=h)), u.format(d=d, h=h)
         except OSError as e:
-            err = e
-    raise err
+            errs.append(e)
+    # "file not found" only if every catalogue says so; otherwise the first real error
+    # (the last URL, "latest", is a 404 for any old run and would hide it)
+    real = [e for e in errs if "file not found" not in str(e)]
+    raise (real or errs)[0]
+
+
+def server_up() -> bool:
+    """A run known to exist answers its DDS; thredds outages (HTTP 500 "Storage ... is not
+    active", 429, 503) fail it. Distinguishes a server outage from a missing run."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(PROBE + ".dds", timeout=60) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+MAX_WAIT_H = 48.0
+
+
+def wait_for_server():
+    max_h = MAX_WAIT_H
+    t0 = time.time()
+    while not server_up():
+        if time.time() - t0 > max_h * 3600:
+            raise SystemExit(f"thredds down for {max_h} h, giving up")
+        print(f"{time.strftime('%H:%M')} thredds down, waiting", flush=True)
+        time.sleep(600)
 
 
 def as_slices(leads) -> list:
@@ -197,7 +228,7 @@ def with_timeout(fn, args, timeout: float = 180.0):
 
 
 def main():
-    global VARS, WIN_KM
+    global VARS, WIN_KM, MAX_WAIT_H
     p = argparse.ArgumentParser()
     p.add_argument("--start", default="2018-01-01")
     p.add_argument("--end", default="2025-12-31")
@@ -212,7 +243,10 @@ def main():
     p.add_argument("--timeout", type=float, default=180.0, help="seconds per run before an attempt is abandoned")
     p.add_argument("--vars", nargs="+", default=None, choices=list(VARS),
                    help="subset of the output variables (e.g. u10 v10 t2m msl for the hourly samples)")
+    p.add_argument("--max-wait-h", type=float, default=48.0,
+                   help="hours to wait out a thredds outage before giving up (real time: short)")
     a = p.parse_args()
+    MAX_WAIT_H = a.max_wait_h
     use_model(a.model)
     WIN_KM = WINDOWS[a.window]
     if a.vars:
@@ -227,7 +261,8 @@ def main():
             if out.exists() and has_leads(out, a.leads):
                 continue
             out.parent.mkdir(parents=True, exist_ok=True)
-            for attempt in range(4):
+            attempt = 0
+            while True:
                 try:
                     t0 = time.time()
                     if not windows:  # both grids' windows, computed once in the parent
@@ -241,15 +276,19 @@ def main():
                     print(f"{d} {h:02d}Z ok {time.time() - t0:.0f}s", flush=True)
                     break
                 except Exception as e:  # missing runs, server hiccups
-                    msg = str(e).splitlines()[0][:120]
-                    if attempt == 3 or "NetCDF: file not found" in msg or "404" in msg:
+                    msg = str(e).splitlines()[0][:200]
+                    if not server_up():  # outage, not this run: wait, retry, don't count it
+                        wait_for_server()
+                        continue
+                    attempt += 1
+                    if attempt == 4 or "NetCDF: file not found" in msg or "404" in msg:
                         n_fail += 1
                         print(f"{d} {h:02d}Z FAIL {msg}", flush=True)
                         with open(a.out / "missing.txt", "a") as f:
                             f.write(f"{d:%Y%m%d}T{h:02d} {msg}\n")
                         break
                     # 429: the server rate-limits this client; back off for minutes
-                    time.sleep((120 if "429" in msg or "Access failure" in msg else 30) * (attempt + 1))
+                    time.sleep((120 if "429" in msg or "Access failure" in msg else 30) * attempt)
         d += timedelta(days=1)
     print(f"done: {n_ok} ok, {n_fail} failed", flush=True)
 
