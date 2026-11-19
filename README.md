@@ -21,12 +21,12 @@ are compared under one protocol. Design, data caveats and experiment plan:
 | `configs/f1_meps.yaml` | F1: MEPS + terrain → operator → MET Nordic |
 | `scripts/build_station_samples.py` | MEPS bilinear at the stations + hourly station wind → `cache/stations_meps_*.npz` |
 | `windcast/station_correction.py` | track A station correction: obs-forecast, spatial GP, IDW, metrics |
-| `notebooks/a0_station_correction.ipynb` | A0: MEPS correction from station obs-forecast (persistence, ridge regression, GP), 2018-01–07 |
 | `scripts/build_multimodel_samples.py` | IFS + AIFS on the common 0.25° grid and at the stations, 2024-03 – 2025-09 → `cache/multimodel_*` |
 | `windcast/training/train_station_operator.py` | A1 / A2: neuraloperator models for station correction (`--inputs obs` or `terrain`) |
-| `notebooks/a1_multimodel_operators.ipynb` (`make_a1.py`) | A1: all neuraloperator models vs ridge regression and Gaussian process, IFS + AIFS |
 | `scripts/build_terrain_descriptors.py` | 28 terrain / surface descriptors on the 1 km grid and at the stations |
-| `notebooks/a2_terrain_descriptors.ipynb` (`make_a2.py`) | A2: station correction from terrain descriptors, on held-out station groups |
+| `notebooks/01_training.ipynb` (`make_01_training.py`) | training curves of the station-correction models: split, loss curves, learning rate, station groups, validation vs test |
+| `notebooks/02_experiments.ipynb` (`make_02_experiments.py`) | held-out test scores under different settings: learning rate, terrain resolution, network type, input forecasts, observations as input, training stations |
+| `notebooks/runlib.py` | reads `runs_a1/*/history.json` and `pred.npz` and scores the held-out predictions (shared by 01 and 02) |
 | `scripts/predict_terrain_grid.py` | A2: applies the terrain models on the 1 km grid (maps + check at withheld stations) |
 | `slurm/train_a1.slurm`, `slurm/gpu_script.slurm`, `slurm/run_notebook.slurm` | GPU training runs one after another; one GPU script; notebooks executed on a CPU node |
 

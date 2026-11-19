@@ -8,7 +8,7 @@
 #SBATCH --time=03:00:00
 #SBATCH --output=/cluster/work/projects/nn8106k/siyan/windcast/logs/nb_%j.out
 # Executes notebooks in place on a CPU node (no cell timeout):
-#   sbatch slurm/run_notebook.slurm notebooks/a2_terrain_descriptors.ipynb
+#   sbatch slurm/run_notebook.slurm notebooks/02_experiments.ipynb
 set -euo pipefail
 REPO=/cluster/home/siyan/github/windcast
 # windcast-x86 links to the zen4 Python of the login nodes; the CPU nodes are zen5, so build a
