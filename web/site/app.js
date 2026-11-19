@@ -113,6 +113,30 @@ function setCell(i, j) {
             sub: `1 km cell · nearest station ${best.name}, ${bd.toFixed(0)} km away` };
   renderAll();
 }
+// ---------- my location (browser geolocation) ----------
+function locate() {
+  const btn = $("locate"), msg = $("locate-msg");
+  const say = t => { msg.textContent = t; msg.hidden = !t; };
+  if (!navigator.geolocation) { say("This browser cannot share its location."); return; }
+  btn.setAttribute("aria-busy", "true"); say("Finding your location…");
+  navigator.geolocation.getCurrentPosition(pos => {
+    btn.removeAttribute("aria-busy");
+    const { latitude: la, longitude: lo } = pos.coords;
+    const [fi, fj] = pixelOf(la, lo), i = Math.round(fi), j = Math.round(fj);
+    if (!(i >= 0 && i < S.grid.height && j >= 0 && j < S.grid.width) || la < 64 || la > 72 || lo < 4 || lo > 34) {
+      say(`Your location (${la.toFixed(2)}° N, ${lo.toFixed(2)}° E) is outside the forecast area, Northern Norway.`); return;
+    }
+    say("");
+    const st = nearStation(i, j, 2);                    // within about 2 km: the station itself
+    if (st) setStation(st); else setCell(i, j);
+    if (S.view === "map") drawMap();
+  }, err => {
+    btn.removeAttribute("aria-busy");
+    say(err.code === err.PERMISSION_DENIED ? "Location access was not allowed. Allow it for this site in the browser to use this button."
+      : !window.isSecureContext ? "The browser shares the location only on https:// or localhost pages."
+      : "Your location could not be found. Try again, or search a station.");
+  }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 });
+}
 function series(cfg = S.cfg) {
   const raw = S.loc.kind === "station" ? (stationById(S.loc.id).fc[cfg] || null) : cellSeries(cfg, S.loc.i, S.loc.j);
   return raw ? hourly(raw) : raw;
@@ -646,6 +670,7 @@ async function boot() {
   $("run").addEventListener("change", e => loadRun(e.target.value));
   $("model").addEventListener("change", e => setModel(e.target.value));
   $("all-models").addEventListener("change", () => { if (S.loc) renderGraph(); });
+  $("locate").addEventListener("click", locate);
   $("q").addEventListener("change", e => {
     const st = S.F.stations.find(s => s.name.toLowerCase() === e.target.value.trim().toLowerCase());
     if (st) { setStation(st); e.target.value = ""; }

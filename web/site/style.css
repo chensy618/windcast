@@ -43,6 +43,15 @@ select:focus-visible, input:focus-visible, button:focus-visible { outline: 2px s
 .sub { color: var(--muted); font-size: .85rem; }
 .search { display: flex; min-width: 0; flex: 0 1 320px; }
 .search input { flex: 1; min-width: 0; }
+.search { gap: 8px; }
+.locate { display: inline-flex; align-items: center; gap: 6px; flex: none; font: 500 .9rem var(--font-body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; cursor: pointer; }
+.locate:hover { border-color: var(--accent); color: var(--accent); }
+.locate svg { width: 16px; height: 16px; }
+.locate[aria-busy="true"] svg { animation: locate-spin 1s linear infinite; }
+@keyframes locate-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .locate[aria-busy="true"] svg { animation: none; opacity: .5; } }
+.locate-msg { flex-basis: 100%; text-align: right; }
+@media (max-width: 480px) { .locate span { display: none; } .locate-msg { text-align: left; } }
 .model-pick { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .model-pick select { flex: 0 1 auto; min-width: 0; max-width: 100%; font-weight: 600; }
 .model-note { color: var(--muted); font-size: .82rem; }
