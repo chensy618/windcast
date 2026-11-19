@@ -50,7 +50,34 @@ print(f'{len(G)} stations in {G.max() + 1} groups; target scale sigma_y = {sc.ec
 """)
 
 md(r"""
-## 1 · Data split
+## 1 · Data
+
+**Data sources.**
+
+| input group | model | provider | kind | native grid |
+|---|---|---|---|---|
+| **IFS + AIFS** (labelled *ECMWF* in older notebooks) | IFS | ECMWF, open data | physical (NWP), global | 0.25° |
+| | AIFS | ECMWF, open data | machine learning, global | 0.25° |
+| **IFS + GFS + MEPS + AROME-Arctic** (labelled *NWP* or *four models*) | IFS | ECMWF, open data | physical, global | 0.25° |
+| | GFS | NOAA | physical, global | 0.25° |
+| | MEPS | MET Norway (deterministic member) | physical, regional | 2.5 km |
+| | AROME-Arctic | MET Norway | physical, regional | 2.5 km |
+
+* **How the inputs enter.** The operator reads 10 m wind, 2 m temperature and mean sea-level
+  pressure of every model of the group on a common 0.25° grid (49 × 121 points, 62–74 N, 6–36 E).
+  The global models are used on their own grid points; for MEPS and AROME-Arctic, the mean of
+  their 2.5 km cells inside each 0.25° cell. Where a regional model has no data (MEPS covers
+  64–72 N only), the IFS value is used. At the station, the forecast is bilinear from the 0.25° grid
+  for the global models and the nearest 2.5 km cell for the regional ones. The **input mean**
+  $\bar{\mathbf u}$ (and the reference) is the plain mean of the group's models at the station.
+* **Observations (truth).** Hourly 10 m wind of 99 stations in Nordland, Troms and Finnmark
+  from the MET Norway Frost API.
+* **Terrain.** 28 descriptors on the 1 km grid, from the Kartverket digital terrain model.
+* **Period.** 00 and 12 UTC runs, 2024-03-01 – 2025-09-12, leads 0–66 h every 6 h. Runs where
+  one model of the group is missing are left out.
+
+**Split.**
+
 
 * **Time.** Training runs 2024-03-01 – 2024-12-31, validation 2025-01-01 – 2025-03-31, test
   2025-04-01 – 2025-09-12 (00 and 12 UTC runs). The validation period is winter, the test period

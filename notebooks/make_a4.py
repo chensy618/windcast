@@ -19,7 +19,20 @@ runs present in both the ECMWF and the NWP samples.
 * **Models:** an optional neural operator on the 0.25° fields + an MLP head on the 1 km terrain
   descriptors (see `00_project_overview.ipynb`). Learning rate $10^{-5}$, 3 seeds; the table shows
   the mean over seeds and its standard deviation.
-* **Input groups:** *ECMWF* = IFS + AIFS; *NWP* = IFS + GFS + MEPS + AROME-Arctic.
+* **Input groups** (the *inputs* column of the tables):
+
+| label | models | provider | kind | native grid |
+|---|---|---|---|---|
+| **ECMWF** | IFS | ECMWF, open data | physical (NWP), global | 0.25° |
+| | AIFS | ECMWF, open data | machine learning, global | 0.25° |
+| **NWP** | IFS | ECMWF, open data | physical, global | 0.25° |
+| | GFS | NOAA | physical, global | 0.25° |
+| | MEPS | MET Norway (deterministic member) | physical, regional | 2.5 km |
+| | AROME-Arctic | MET Norway | physical, regional | 2.5 km |
+
+  The labels are short names: IFS is in both groups, and AIFS is a machine-learning model, not NWP.
+  The reference and the *uncorrected* rows are the plain means of the group's models at the station.
+  Observations: hourly 10 m wind from the MET Norway Frost API.
 """)
 
 code(r"""import json, sys, numpy as np, pandas as pd, matplotlib.pyplot as plt
