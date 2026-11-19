@@ -18,7 +18,7 @@ createServer(async (req, res) => {
     const body = await readFile(file);
     const ext = extname(file);
     // forecast data changes every cycle: no caching of JSON
-    res.writeHead(200, { "Content-Type": TYPES[ext] || "application/octet-stream", "Cache-Control": ext === ".json" ? "no-cache" : "max-age=300" });
+    res.writeHead(200, { "Content-Type": TYPES[ext] || "application/octet-stream", "Cache-Control": ext === ".json" || ext === ".html" ? "no-cache" : "max-age=300" });
     res.end(body);
   } catch {
     res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
