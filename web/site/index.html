@@ -109,8 +109,9 @@
   <section class="about panel">
     <div>
       <h3>What this is</h3>
-      <p>Windcast corrects global and regional forecasts of the 10 m wind for the local terrain. A neural network adds the effect of the terrain at each 1 km cell: height, slope, valleys and shelter from the wind direction. Some models first read the weather pattern on the 0.25° grid with a neural operator (SFNO or FNO).</p>
-      <p>Two sets of input forecasts are used: the ECMWF models (IFS and AIFS), and four physical models (IFS, GFS, MEPS and AROME-Arctic). Each forecast is the mean of 15 networks; the spread shows how much they disagree.</p>
+      <p>Windcast corrects global and regional forecasts of the 10 m wind for the local terrain. A neural network (MLP) adds the effect of the terrain at each 1 km cell: height, slope, valleys and shelter from the wind direction.</p>
+      <p>There are six models: three network types, each run on two sets of input forecasts. <b>MLP</b> looks at each cell on its own. <b>SFNO + MLP</b> and <b>FNO + MLP</b> first read the weather pattern over the whole region on the 0.25° grid with a neural operator (spherical or plain Fourier), then pass it to the MLP.</p>
+      <p>The two input sets are the ECMWF models (IFS + AIFS) and four physical models (IFS + GFS + MEPS + AROME-Arctic); the model menu names both parts, e.g. “SFNO + MLP · IFS + AIFS”. Each forecast is the mean of 15 networks; the spread shows how much they disagree.</p>
     </div>
     <div>
       <h3>How good is it</h3>
