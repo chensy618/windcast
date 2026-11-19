@@ -126,8 +126,6 @@ tr.step td:first-child { font-weight: 600; }
 .vt { width: 100%; font-size: .82rem; }
 .vt td, .vt th { padding: 5px 6px; }
 .vt tr.sel td { background: var(--accent-soft); font-weight: 600; }
-.bar { display: inline-block; height: 8px; border-radius: 0 4px 4px 0; background: var(--accent); vertical-align: middle; }
-.bar.ref { background: var(--ref); }
 .foot { color: var(--muted); font-size: .78rem; line-height: 1.5; }
 @media (max-width: 720px) {
   .about { grid-template-columns: 1fr; }

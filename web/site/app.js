@@ -619,19 +619,19 @@ function renderVerif() {
   const one = st && S.verifScope !== "all";              // this station's numbers
   const rows = [["IFS + AIFS mean (reference)", null, one ? st.reference : mean(v.rmse_reference)]];
   for (const c of ORDER) if (v.configs[c]) rows.push([(S.F.configs[c] || { label: c }).label, c, one ? st[c] : mean(v.configs[c].rmse)]);
-  const ref = rows[0][2], ok = rows.filter(r => r[2] != null);
-  const lo = Math.min(...ok.map(r => r[2])) * 0.97, hi = Math.max(...ok.map(r => r[2]), ref * 1.03);
+  const r2 = x => Math.round(x * 100) / 100;          // the change is computed from the RMSE as shown
+  const ref = r2(rows[0][2]);
   const seg = st ? `<div class="seg verif-scope" role="group" aria-label="Which stations">` +
     `<button type="button" data-scope="station" aria-pressed="${one}">${esc(S.loc.name)}</button>` +
     `<button type="button" data-scope="all" aria-pressed="${!one}">All ${v.n_stations} stations</button></div>` : "";
   const note = one
-    ? `Mean over forecast times 0 to 66 h at ${esc(S.loc.name)}, ${v.period}, ${st.n.toLocaleString("en-GB")} observations. Predicted by the models trained without this station. One station is a small sample: differences of a few per cent are within the noise.`
+    ? `Mean over forecast times 0 to 66 h at ${esc(S.loc.name)}, ${v.period}, ${st.n.toLocaleString("en-GB")} observations. Predicted by the models trained without this station.`
     : `Mean over forecast times 0 to 66 h, ${v.n_stations} stations, ${v.period}. Each station is predicted by models trained without it. The hourly values between the 6-hourly model times are interpolated; they keep almost all of the improvement.` +
       (S.loc && S.loc.kind !== "station" ? " Choose a station to see its own numbers." : "");
-  $("verif").innerHTML = seg + `<div class="tbl"><table class="vt"><thead><tr><th>Model</th><th class="num">RMSE</th><th class="num">Change</th><th></th></tr></thead><tbody>` +
-    rows.map(([lab, c, m]) => { if (m == null) return `<tr><td>${lab}</td><td class="num">–</td><td class="num">–</td><td></td></tr>`;
-      const ch = (m / ref - 1) * 100;
-      return `<tr class="${c === S.cfg ? "sel" : ""}"><td>${lab}</td><td class="num">${m.toFixed(2)} m/s</td><td class="num">${c ? (ch > 0 ? "+" : "") + ch.toFixed(1) + " %" : "–"}</td><td><span class="bar${c ? "" : " ref"}" style="width:${Math.max(2, (m - lo) / (hi - lo) * 90)}px"></span></td></tr>`; }).join("") +
+  $("verif").innerHTML = seg + `<div class="tbl"><table class="vt"><thead><tr><th>Model</th><th class="num">RMSE</th><th class="num">Change</th></tr></thead><tbody>` +
+    rows.map(([lab, c, m]) => { if (m == null) return `<tr><td>${lab}</td><td class="num">–</td><td class="num">–</td></tr>`;
+      m = r2(m); const ch = (m / ref - 1) * 100;
+      return `<tr class="${c === S.cfg ? "sel" : ""}"><td>${lab}</td><td class="num">${m.toFixed(2)} m/s</td><td class="num">${c ? (ch > 0 ? "+" : "") + ch.toFixed(1) + " %" : "–"}</td></tr>`; }).join("") +
     `</tbody></table></div><p class="hint">${note}</p>`;
   for (const b of $("verif").querySelectorAll("[data-scope]"))
     b.addEventListener("click", () => { S.verifScope = b.dataset.scope; store.set("wc-verif", S.verifScope); renderVerif(); });
