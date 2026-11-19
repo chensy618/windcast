@@ -117,6 +117,22 @@ class SpatialGP:
         return out
 
 
+def station_groups(xy, k=5, seed=0, iters=50):
+    """Spatially blocked groups by k-means on the station positions (numpy only)."""
+    rng = np.random.default_rng(seed)
+    best, best_inertia = None, np.inf
+    for _ in range(10):
+        c = xy[rng.choice(len(xy), k, replace=False)]
+        for _ in range(iters):
+            lab = np.argmin(((xy[:, None] - c[None]) ** 2).sum(-1), 1)
+            c = np.stack([xy[lab == j].mean(0) if (lab == j).any() else c[j] for j in range(k)])
+        inertia = ((xy - c[lab]) ** 2).sum()
+        if inertia < best_inertia:
+            best, best_inertia = lab, inertia
+    return best
+
+
+
 def idw(xy, omf0, power=2.0, exclude_self=True, eps_km=1.0):
     """Inverse-distance-weighted mean of other stations' obs-forecast (ridge regression feature)."""
     r = np.linalg.norm(xy[:, None] - xy[None], axis=-1) + eps_km
@@ -140,3 +156,16 @@ def crps_gauss(mu, sd, y):
     from scipy.stats import norm
     z = (y - mu) / sd
     return sd * (z * (2 * norm.cdf(z) - 1) + 2 * norm.pdf(z) - 1 / np.sqrt(np.pi))
+
+
+SX_DIRS = ("n", "ne", "e", "se", "s", "sw", "w", "nw")   # order of the sx_* / sx10_* descriptors
+
+
+def upwind(sx, u, v):
+    """Shelter angle toward the direction the wind blows from, interpolated between the 8
+    sectors. sx (S, 8) in SX_DIRS order; u, v (..., S) -> (..., S)."""
+    pos = (np.arctan2(-u, -v) % (2 * np.pi)) / (np.pi / 4)
+    i0 = np.floor(pos).astype(int) % 8
+    f = pos - np.floor(pos)
+    s_ = np.arange(sx.shape[0])
+    return (1 - f) * sx[s_, i0] + f * sx[s_, (i0 + 1) % 8]

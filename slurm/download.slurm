@@ -15,6 +15,7 @@
 # a resubmitted job, at most MAX_RESUBMIT times.
 #   sbatch slurm/download.slurm            # all streams
 #   sbatch slurm/download.slurm meps ifs   # some streams
+#   sbatch slurm/download.slurm aiwp arome gfs ifsno aifsno   # MLWP / NWP comparison (not default)
 set -uo pipefail
 ulimit -c 0
 REPO=/cluster/home/siyan/github/windcast
@@ -36,6 +37,18 @@ CMD[ifs]="scripts/download_ecmwf.py --model ifs --start 2023-07-12 --end 2025-12
 LOG[ifs]=$W/ecmwf/logs/dl_ifs.log
 CMD[aifs]="scripts/download_ecmwf.py --model aifs --start 2024-03-01 --end 2025-12-31"
 LOG[aifs]=$W/ecmwf/logs/dl_aifs.log
+# MLWP / NWP comparison: AIWP ML models (IFS-initialised) and AROME-Arctic 2.5 km
+CMD[aiwp]="scripts/download_aiwp.py --models graphcast pangu fourcastnet --start 2024-02-28 --end 2025-09-16 --workers 12"
+LOG[aiwp]=$W/aiwp_logs/dl_aiwp.log
+CMD[arome]="scripts/download_meps.py --model arome_arctic --start 2024-02-28 --end 2025-09-16"
+LOG[arome]=$W/arome_arctic/logs/dl_all.log
+# the same, on the 0.25 deg box of mainland Norway (57.5-74 N, 4-36 E)
+CMD[gfs]="scripts/download_gfs.py --start 2024-02-28 --end 2025-09-16"
+LOG[gfs]=$W/gfs/logs/dl_gfs.log
+CMD[ifsno]="scripts/download_ecmwf.py --model ifs --box norway --start 2024-02-28 --end 2025-09-16"
+LOG[ifsno]=$W/ecmwf_no/logs/dl_ifs.log
+CMD[aifsno]="scripts/download_ecmwf.py --model aifs --box norway --start 2024-02-28 --end 2025-09-16"
+LOG[aifsno]=$W/ecmwf_no/logs/dl_aifs.log
 
 echo "job $SLURM_JOB_ID on $(hostname), streams: ${STREAMS[*]}, resubmit $N/$MAX_RESUBMIT"
 declare -A PID

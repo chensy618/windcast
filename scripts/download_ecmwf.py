@@ -82,6 +82,15 @@ def wanted(rec: dict) -> str | None:
 # target for products not on a regular lat / lon grid (early AIFS runs: reduced Gaussian N320)
 REG_LAT = np.arange(LAT[1], LAT[0] - 1e-6, -0.25)
 REG_LON = np.arange(LON[0], LON[1] + 1e-6, 0.25)
+BOXES = {"north": (LAT, LON, OUT),
+         "norway": ((57.5, 74.0), (4.0, 36.0), OUT.with_name("ecmwf_no"))}   # mainland Norway + margin
+
+
+def set_box(name):
+    global LAT, LON, OUT, REG_LAT, REG_LON
+    LAT, LON, OUT = BOXES[name]
+    REG_LAT = np.arange(LAT[1], LAT[0] - 1e-6, -0.25)
+    REG_LON = np.arange(LON[0], LON[1] + 1e-6, 0.25)
 
 
 def decode(msg: bytes):
@@ -177,8 +186,12 @@ def main():
     p.add_argument("--end", required=True)
     p.add_argument("--inits", type=int, nargs="+", default=[0, 12])
     p.add_argument("--leads", type=int, nargs="+", default=list(range(0, 67, 6)))
-    p.add_argument("--out", type=Path, default=OUT)
+    p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--box", default="north", choices=sorted(BOXES),
+                   help="norway: mainland Norway 57.5-74 N, 4-36 E, into OUT ecmwf_no")
     a = p.parse_args()
+    set_box(a.box)
+    a.out = a.out or OUT
     d, d1 = date.fromisoformat(a.start), date.fromisoformat(a.end)
     n_ok = n_fail = 0
     while d <= d1:

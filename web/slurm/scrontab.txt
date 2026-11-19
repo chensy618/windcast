@@ -1,0 +1,22 @@
+# Real-time schedule of the website. Install with:  scrontab web/slurm/scrontab.txt
+# Times are the cluster's local time (CET/CEST). ECMWF open data of the 00 / 12 UTC runs is
+# complete about 7-8 h after the run; a cycle that finds its run already done only refreshes the
+# observations, so the extra slots are cheap retries.
+#SCRON --account=nn8106k
+#SCRON --job-name=wc-realtime
+#SCRON --partition=accel
+#SCRON --gres=gpu:1
+#SCRON --cpus-per-task=8
+#SCRON --mem=80G
+#SCRON --time=01:30:00
+#SCRON --output=/cluster/work/projects/nn8106k/siyan/windcast/logs/realtime_%j.out
+30 9,11,21,23 * * * cd /cluster/home/siyan/github/windcast && bash web/slurm/realtime.slurm
+
+#SCRON --account=nn8106k
+#SCRON --job-name=wc-obs
+#SCRON --partition=small
+#SCRON --cpus-per-task=1
+#SCRON --mem=2G
+#SCRON --time=00:10:00
+#SCRON --output=/cluster/work/projects/nn8106k/siyan/windcast/logs/realtime_obs_%j.out
+5 * * * * cd /cluster/home/siyan/github/windcast && bash web/slurm/observations.slurm

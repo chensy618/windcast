@@ -2,6 +2,11 @@
 thredds archive (OPeNDAP subset: window, leads, variables), for forecast downscaling (track A).
 
     python scripts/download_meps.py --start 2018-01-01 --end 2025-12-31 [--inits 0 12]
+    python scripts/download_meps.py --model arome_arctic --start 2024-02-28 --end 2025-09-16
+
+--model arome_arctic: AROME-Arctic 2.5 km (MET Norway, aromearcticarchive), same variables
+and window, its own Lambert grid (tangent at 77.5 N, central meridian -25); files
+ROOT/arome_arctic/YYYY/arome_arctic_YYYYMMDDTHH.nc.
 
 One file per run: OUT/YYYY/meps_YYYYMMDDTHH.nc with (lead, y, x) fields plus lat/lon:
 wind (u10, v10, gust), t2m, rh2m, msl, total cloud, accumulated precipitation, BLH.
@@ -24,10 +29,32 @@ from windcast.geo import to_plane  # noqa: E402
 
 BASE = "https://thredds.met.no/thredds/dodsC/meps25epsarchive/{d:%Y/%m/%d}/"
 # meps_det from 2020-02; before it the control member (ensemble_member 0) of meps_subset
+# from 2024-03 most days only have meps_det_sfc (surface fields of the same run)
 URLS = [BASE + "meps_det_2_5km_{d:%Y%m%d}T{h:02d}Z.nc",
-        BASE + "meps_subset_2_5km_{d:%Y%m%d}T{h:02d}Z.nc"]
+        BASE + "meps_det_sfc_{d:%Y%m%d}T{h:02d}Z.ncml",  # NcML aggregation, same grid
+        BASE + "meps_subset_2_5km_{d:%Y%m%d}T{h:02d}Z.nc",
+        # the last ~2 days are only in the "latest" catalogue (real-time use)
+        "https://thredds.met.no/thredds/dodsC/mepslatest/meps_det_2_5km_{d:%Y%m%d}T{h:02d}Z.ncml"]
 LCC_LON0, LCC_N = 15.0, np.sin(np.deg2rad(63.0))  # MEPS Lambert, tangent at 63N
 OUT = Path("/cluster/work/projects/nn8106k/siyan/windcast/meps")
+PREFIX = "meps"
+GRID_DATES = (date(2018, 1, 1), date(2023, 1, 1))  # one run on each MEPS grid
+# other 2.5 km MET Norway models with the MEPS variable names: urls, Lambert (lon0, n), out
+OTHER = {"arome_arctic": dict(
+    urls=["https://thredds.met.no/thredds/dodsC/aromearcticarchive/{d:%Y/%m/%d}/"
+          "arome_arctic_det_2_5km_{d:%Y%m%d}T{h:02d}Z.nc",
+          "https://thredds.met.no/thredds/dodsC/aromearcticlatest/latest/"
+          "arome_arctic_det_2_5km_{d:%Y%m%d}T{h:02d}Z.ncml"],
+    lcc=(-25.0, np.sin(np.deg2rad(77.5))), grid_dates=(date(2024, 3, 1),),
+    out=Path("/cluster/work/projects/nn8106k/siyan/windcast/arome_arctic"))}
+
+
+def use_model(name):
+    global URLS, LCC_LON0, LCC_N, OUT, PREFIX, GRID_DATES
+    if name == "meps":
+        return
+    m = OTHER[name]
+    URLS, (LCC_LON0, LCC_N), OUT, PREFIX, GRID_DATES = m["urls"], m["lcc"], m["out"], name, m["grid_dates"]
 # Northern Norway (Nordland, Troms, Finnmark: the 113 Frost stations span x -374..414,
 # y -299..364 km on the windcast.geo plane) + 50 km; contains the 1 km Tromsø–Senja grid.
 # About 333 x 378 MEPS cells on both MEPS grids (checked: inside, off the grid edges).
@@ -108,7 +135,12 @@ def fetch(d: date, h: int, leads, windows: dict, out: Path):
         n = len(ds["time"][:])
         lt = [l for l in leads if l < n]
         lon, lat = ds["longitude"][sy, sx], ds["latitude"][sy, sx]
-        raw = {k: read(ds[v], lt, sy, sx) for k, v in VARS.items()}
+        raw = {k: read(ds[v], lt, sy, sx) for k, v in VARS.items() if v in ds.variables}
+        if "fg10" in VARS and "fg10" not in raw:  # meps_det_sfc: gust as x / y components only
+            raw["fg10"] = np.hypot(read(ds["x_wind_gust_10m"], lt, sy, sx), read(ds["y_wind_gust_10m"], lt, sy, sx))
+        missing = set(VARS) - set(raw)
+        if missing:
+            raise KeyError(f"variables not in {url}: {sorted(missing)}")
         raw["u10"], raw["v10"] = rotate(raw["u10"], raw["v10"], lon)
         data = {k: (("lead", "y", "x"), a.astype("f4")) for k, a in raw.items()}
         ref = float(ds["forecast_reference_time"][:])
@@ -162,6 +194,7 @@ def with_timeout(fn, args, timeout: float = 180.0):
 
 
 def main():
+    global VARS
     p = argparse.ArgumentParser()
     p.add_argument("--start", default="2018-01-01")
     p.add_argument("--end", default="2025-12-31")
@@ -169,14 +202,22 @@ def main():
     # hourly 0-12 h (obs-forecast: past runs vs hourly station obs), then the 6-hourly
     # leads shared with the global ML models (fusion), to MEPS's +66 h
     p.add_argument("--leads", type=int, nargs="+", default=list(range(0, 13)) + list(range(18, 67, 6)))
-    p.add_argument("--out", type=Path, default=OUT)
+    p.add_argument("--model", default="meps", choices=["meps"] + list(OTHER))
+    p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--timeout", type=float, default=180.0, help="seconds per run before an attempt is abandoned")
+    p.add_argument("--vars", nargs="+", default=None, choices=list(VARS),
+                   help="subset of the output variables (e.g. u10 v10 t2m msl for the hourly samples)")
     a = p.parse_args()
+    use_model(a.model)
+    if a.vars:
+        VARS = {k: VARS[k] for k in a.vars}
+    a.out = a.out or OUT
     d0, d1 = date.fromisoformat(a.start), date.fromisoformat(a.end)
     windows = {}
     d, n_ok, n_fail = d0, 0, 0
     while d <= d1:
         for h in a.inits:
-            out = a.out / f"{d:%Y}" / f"meps_{d:%Y%m%d}T{h:02d}.nc"
+            out = a.out / f"{d:%Y}" / f"{PREFIX}_{d:%Y%m%d}T{h:02d}.nc"
             if out.exists() and has_leads(out, a.leads):
                 continue
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -184,11 +225,11 @@ def main():
                 try:
                     t0 = time.time()
                     if not windows:  # both grids' windows, computed once in the parent
-                        for g in (date(2018, 1, 1), date(2023, 1, 1)):
+                        for g in GRID_DATES:
                             ds, _ = open_run(g, 0)
                             windows[(ds.dimensions["y"].size, ds.dimensions["x"].size)] = window(ds)
                             ds.close()
-                    with_timeout(fetch, (d, h, a.leads, windows, out))
+                    with_timeout(fetch, (d, h, a.leads, windows, out), a.timeout)
                     n_ok += 1
                     time.sleep(1.0)  # stay under the archive's rate limit
                     print(f"{d} {h:02d}Z ok {time.time() - t0:.0f}s", flush=True)
