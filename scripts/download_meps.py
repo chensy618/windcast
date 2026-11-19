@@ -65,7 +65,10 @@ def use_model(name):
 WIN_KM = (-424, 464, -349, 414)
 # --window grid: the whole 1 km grid of static/terrain_descriptors_1km.npz (x -591..448, y -579..524 km)
 # + 10 km, for the website forecasts (the NWP configurations then cover the whole map)
-WINDOWS = {"north": WIN_KM, "grid": (-601, 458, -589, 534)}
+# --window norway: mainland Norway (the 320 Frost 10 m wind stations and the coast's extreme points
+# span x -876..414, y -1038..366 km) + 50 km; 644 x 602 MEPS cells on both grids, off the edges.
+# Use with --out .../meps_no (track A, all of Norway).
+WINDOWS = {"north": WIN_KM, "grid": (-601, 458, -589, 534), "norway": (-926, 464, -1088, 416)}
 VARS = {  # output name: MEPS variable (any extra level / member dims: index 0)
     "u10": "x_wind_10m", "v10": "y_wind_10m", "fg10": "wind_speed_of_gust",
     "t2m": "air_temperature_2m", "rh2m": "relative_humidity_2m",
@@ -239,7 +242,8 @@ def main():
     p.add_argument("--model", default="meps", choices=["meps"] + list(OTHER))
     p.add_argument("--out", type=Path, default=None)
     p.add_argument("--window", default="north", choices=list(WINDOWS),
-                   help="north: Northern Norway (training samples); grid: the whole 1 km map (website)")
+                   help="north: Northern Norway (training samples); grid: the whole 1 km map (website); "
+                        "norway: mainland Norway (training on all of Norway)")
     p.add_argument("--timeout", type=float, default=180.0, help="seconds per run before an attempt is abandoned")
     p.add_argument("--vars", nargs="+", default=None, choices=list(VARS),
                    help="subset of the output variables (e.g. u10 v10 t2m msl for the hourly samples)")
