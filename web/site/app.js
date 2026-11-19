@@ -138,11 +138,10 @@ function nowIndex() {
 function renderNow() {
   const s = series(), el = $("now");
   if (!s) { el.innerHTML = ""; return; }
-  const k = nowIndex(), mx = Math.max(...s.speed), kmx = s.speed.indexOf(mx);
+  const k = nowIndex();
   const isNow = Math.abs(S.times[k] - Date.now()) < 3600e3;
   el.innerHTML = `
-    <div><span class="k">${isNow ? "Now" : "Forecast for"} · ${fmtShort.format(S.times[k])}</span><span class="v">${arrowSvg(s.dir[k], "arrow", css("--accent"))}${fmt(s.speed[k])} m/s</span></div>
-    <div><span class="k">Strongest until ${fmtShort.format(S.times[S.times.length - 1])}</span><span class="v">${fmt(mx)} m/s <small>${fmtShort.format(S.times[kmx])}</small></span></div>`;
+    <div><span class="k">${isNow ? "Now" : "Forecast for"} · ${fmtShort.format(S.times[k])}</span><span class="v">${arrowSvg(s.dir[k], "arrow", css("--accent"))}${fmt(s.speed[k])} m/s</span></div>`;
 }
 function renderTable() {
   const s = series(), msg = $("tbl-msg");
