@@ -4,6 +4,10 @@ of models, for comparing input groups with the same operator + MLP head.
 
     python scripts/build_group_samples.py --group nwp      # IFS, GFS, MEPS, AROME-Arctic
     python scripts/build_group_samples.py --group mlwp     # AIFS, GraphCast, Pangu, FourCastNet
+    python scripts/build_group_samples.py --group mix      # IFS, AIFS, MEPS, AROME-Arctic
+
+'mix' is the union of the two main groups: the global IFS + AIFS of the base file and the
+2.5 km MEPS + AROME-Arctic of build_lam_samples.py, here all on the 0.25 deg grid.
 
 Fields: 10u, 10v, 2t, msl (the ones every model has), on the 0.25 deg grid of the base file
 (49 x 121, 74 -> 62 N, 6 -> 36 E):
@@ -18,6 +22,7 @@ OUT ROOT/cache/multimodel_2024-03-01_2025-09-12_<group>.npz        same keys as 
     ROOT/cache/multimodel_2024-03-01_2025-09-12_<group>_grid.npy   (N, L, M, 4, 49, 121) float16
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -30,9 +35,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from windcast.geo import to_plane  # noqa: E402
 
 ROOT = Path("/cluster/work/projects/nn8106k/siyan/windcast")
-TAG = "2024-03-01_2025-09-12"
+TAG = os.environ.get("WINDCAST_PERIOD", "2024-03-01_2025-09-12")  # as train_station_operator.py
 GROUPS = {"nwp": ["ifs", "gfs", "meps", "arome_arctic"],
-          "mlwp": ["aifs", "graphcast", "pangu", "fourcastnet"]}
+          "mlwp": ["aifs", "graphcast", "pangu", "fourcastnet"],
+          "mix": ["ifs", "aifs", "meps", "arome_arctic"]}   # IFS first: it fills the Lambert gaps
 FIELDS = ["10u", "10v", "2t", "msl"]
 LAMBERT_VARS = {"10u": "u10", "10v": "v10", "2t": "t2m", "msl": "msl"}   # MEPS / AROME names
 LAMBERT = {"meps", "arome_arctic"}
@@ -57,7 +63,7 @@ class Lambert:
         self.count = np.bincount(self.cell, minlength=len(lat) * len(lon))
         self.HW = (len(lat), len(lon))
         dist, self.st_idx = cKDTree(to_plane(glon.ravel(), glat.ravel())).query(to_plane(st_lon, st_lat))
-        assert dist.max() < 2.0, f"station outside the window ({dist.max():.1f} km)"
+        self.st_in = dist < 2.0   # outside (AROME-Arctic, 3 Swedish / Finnish stations): the MEPS value
 
     def to_grid(self, v, fill):
         """v (L, y, x) -> (L, H, W): mean over the native cells of each 0.25 deg cell, else fill."""
@@ -69,12 +75,23 @@ class Lambert:
         return out
 
 
+class NoGrid:
+    """Stands in for the grid file when only the station values are wanted."""
+
+    def __setitem__(self, key, value):
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--group", required=True, choices=list(GROUPS))
+    ap.add_argument("--stations", default="base", choices=["base", "ext"],
+                    help="ext: + the Swedish / Finnish stations (multimodel_<tag>_ext.npz); the grid "
+                         "does not depend on the stations, so the base group's grid file is linked")
     a = ap.parse_args()
     models = GROUPS[a.group]
-    base = dict(np.load(ROOT / "cache" / f"multimodel_{TAG}.npz", allow_pickle=True))
+    sfx = "" if a.stations == "base" else f"_{a.stations}"
+    base = dict(np.load(ROOT / "cache" / f"multimodel_{TAG}{sfx}.npz", allow_pickle=True))
     inits, leads = pd.DatetimeIndex(base["inits"]), [int(x) for x in base["leads"]]
     lat, lon = base["lat"].astype(float), base["lon"].astype(float)
     dlat, dlon = lat[1] - lat[0], lon[1] - lon[0]
@@ -86,7 +103,11 @@ def main():
 
     N, L, M, C, S = len(inits), len(leads), len(models), len(FIELDS), len(base["station"])
     out_grid = ROOT / "cache" / f"multimodel_{TAG}_{a.group}_grid.npy"
-    grid = np.lib.format.open_memmap(out_grid, mode="w+", dtype=np.float16, shape=(N, L, M, C, len(lat), len(lon)))
+    if sfx:
+        grid = NoGrid()
+        base_keep = np.load(ROOT / "cache" / f"multimodel_{TAG}_{a.group}.npz")["keep"]
+    else:
+        grid = np.lib.format.open_memmap(out_grid, mode="w+", dtype=np.float16, shape=(N, L, M, C, len(lat), len(lon)))
     st_fc = np.full((N, L, M, S, 2), np.nan, np.float32)
     keep = base["keep"].copy()
     lam, cut = {}, {}
@@ -119,6 +140,10 @@ def main():
                         grid[n, :, k, c] = lam[m].to_grid(v, fill)
                         if c < 2:
                             st_fc[n, :, k, :, c] = v.reshape(L, -1)[:, lam[m].st_idx]
+                            out_ = ~lam[m].st_in
+                            if out_.any():
+                                assert m != "meps", "station outside MEPS"
+                                st_fc[n, :, k, out_, c] = st_fc[n, :, models.index("meps"), out_, c]
                 else:
                     if m not in cut:
                         glat, glon = ds["lat"][:].astype(float), ds["lon"][:].astype(float)
@@ -141,12 +166,18 @@ def main():
                         ifs = vals
         if n % 100 == 0:
             print(n, t, flush=True)
-    grid.flush()
     keep &= np.isfinite(st_fc).all((1, 2, 3, 4))
-    keep &= np.isfinite(np.asarray(grid[:, :, :, :2, ::8, ::8], np.float32)).all((1, 2, 3, 4, 5))
+    if sfx:
+        keep &= base_keep
+        link = ROOT / "cache" / f"multimodel_{TAG}{sfx}_{a.group}_grid.npy"
+        link.unlink(missing_ok=True)
+        link.symlink_to(out_grid.name)
+    else:
+        grid.flush()
+        keep &= np.isfinite(np.asarray(grid[:, :, :, :2, ::8, ::8], np.float32)).all((1, 2, 3, 4, 5))
     print(f"{a.group} {models}: runs kept {keep.sum()} / {N} (base {base['keep'].sum()})")
     out = {**base, "models": np.array(models), "fields": np.array(FIELDS), "keep": keep, "st_fc": st_fc}
-    np.savez_compressed(ROOT / "cache" / f"multimodel_{TAG}_{a.group}.npz", **out)
+    np.savez_compressed(ROOT / "cache" / f"multimodel_{TAG}{sfx}_{a.group}.npz", **out)
     print("done", out_grid)
 
 

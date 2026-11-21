@@ -94,11 +94,24 @@ def smhi_stations(t0, t1, min_lat):
 
 
 def smhi_series(sid, p, t0, t1):
-    r = get(f"{SMHI.format(p=p)}/station/{sid}/period/corrected-archive/data.csv")
+    """The corrected archive (ends about three months before today), extended with the
+    latest-months period (the last four months, not yet corrected) where the archive ends."""
+    parts = [d for d in (smhi_period(sid, p, t0, t1, per) for per in ("corrected-archive", "latest-months"))
+             if d is not None and len(d)]
+    if not parts:
+        return None
+    d = pd.concat(parts)
+    return d[~d.time.duplicated(keep="first")]
+
+
+def smhi_period(sid, p, t0, t1, period):
+    r = get(f"{SMHI.format(p=p)}/station/{sid}/period/{period}/data.csv")
     if r is None:
         return None
     lines = r.content.decode("utf-8-sig").splitlines()
-    h = next(i for i, x in enumerate(lines) if x.startswith("Datum;Tid (UTC)"))
+    h = next((i for i, x in enumerate(lines) if x.startswith("Datum;Tid (UTC)")), None)
+    if h is None:
+        return None
     d = pd.read_csv(io.StringIO("\n".join(lines[h + 1:])), sep=";", header=None, usecols=[0, 1, 2, 3],
                     names=["d", "t", "value", "q"], dtype={"d": str, "t": str, "q": str})
     d["time"] = pd.to_datetime(d.d + " " + d.t, utc=True)
@@ -107,8 +120,8 @@ def smhi_series(sid, p, t0, t1):
                          "quality": np.where(d.q == "G", 0, 3)})
 
 
-def smhi(t0, t1, min_lat):
-    st = smhi_stations(t0, t1, min_lat)
+def smhi(t0, t1, min_lat, st=None):
+    st = smhi_stations(t0, t1, min_lat) if st is None else st
     print(f"SMHI: {len(st)} stations", flush=True)
     parts = []
     for _, s in st.iterrows():
@@ -166,9 +179,10 @@ def fmi_week(ids, a, b):
     return d.melt(["station", "time"], var_name="element", value_name="value").dropna(subset=["value"])
 
 
-def fmi(t0, t1, min_lat):
-    st = fmi_stations(min_lat)
-    st["masl"] = dem_height(st.lat.values, st.lon.values)
+def fmi(t0, t1, min_lat, st=None):
+    if st is None:
+        st = fmi_stations(min_lat)
+        st["masl"] = dem_height(st.lat.values, st.lon.values)
     print(f"FMI: {len(st)} stations", flush=True)
     parts = []
     a = t0
@@ -191,23 +205,32 @@ def main():
     ap.add_argument("--end", required=True)
     ap.add_argument("--min-lat", type=float, default=65.0)
     ap.add_argument("--only", choices=["smhi", "fmi"])
+    ap.add_argument("--out", default=str(OUT), help="output directory (default ROOT/stations/nordic)")
+    ap.add_argument("--stations", help="station list to reuse (a stations.parquet of an earlier "
+                    "download) instead of selecting the stations again")
     a = ap.parse_args()
     t0, t1 = pd.Timestamp(a.start, tz="UTC"), pd.Timestamp(a.end, tz="UTC")
-    OUT.mkdir(parents=True, exist_ok=True)
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    given = None
+    if a.stations:
+        given = pd.read_parquet(a.stations)
+        given["id"] = given.station.str[2:]
     cols = ["station", "name", "lon", "lat", "masl", "country", "county"]
     for name, fn in (("smhi", smhi), ("fmi", fmi)):
         if a.only and a.only != name:
             continue
-        st, o = fn(t0, t1, a.min_lat)
+        st, o = fn(t0, t1, a.min_lat, None if given is None else
+                   given[given.country == {"smhi": "SE", "fmi": "FI"}[name]].reset_index(drop=True))
         o["level"] = 10.0
         o = o[["station", "time", "element", "value", "level", "quality"]].reset_index(drop=True)
-        o.to_parquet(OUT / f"obs_{name}.parquet", index=False)
-        st[cols].to_parquet(OUT / f"stations_{name}.parquet", index=False)
+        o.to_parquet(out / f"obs_{name}.parquet", index=False)
+        st[cols].to_parquet(out / f"stations_{name}.parquet", index=False)
         n_ok = o[(o.element == "wind_speed") & (o.quality <= 2)].groupby("station").size()
         print(f"{name}: {len(st)} stations, hours with wind per station: median {n_ok.median():.0f}", flush=True)
-    st = pd.concat([pd.read_parquet(f) for f in sorted(OUT.glob("stations_*.parquet"))], ignore_index=True)
-    st.to_parquet(OUT / "stations.parquet", index=False)
-    print(f"done: {len(st)} stations -> {OUT}")
+    st = pd.concat([pd.read_parquet(f) for f in sorted(out.glob("stations_*.parquet"))], ignore_index=True)
+    st.to_parquet(out / "stations.parquet", index=False)
+    print(f"done: {len(st)} stations -> {out}")
 
 
 if __name__ == "__main__":

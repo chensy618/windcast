@@ -50,6 +50,29 @@ LOG[ifsno]=$W/ecmwf_no/logs/dl_ifs.log
 CMD[aifsno]="scripts/download_ecmwf.py --model aifs --box norway --start 2024-02-28 --end 2025-09-16"
 LOG[aifsno]=$W/ecmwf_no/logs/dl_aifs.log
 
+# pressure levels (u, v, t, z at 925 / 850 / 700 / 500 hPa) of MEPS and AROME-Arctic for the
+# 2.5 km samples (scripts/build_lam_samples.py), 6-hourly leads; through the aggregations a run
+# takes ~4 min (MEPS) / ~7 min (AROME-Arctic), so the period is cut into date chunks:
+#   sbatch slurm/download.slurm mepspl1 .. mepspl4 aromepl1 .. aromepl6
+PL_LEADS="--leads 0 6 12 18 24 30 36 42 48 54 60 66 --timeout 900"
+chunks() {  # chunks N -> N "start end" ranges of 2024-02-28 .. 2025-09-16
+  local n=$1 d0 d1 i a b
+  d0=$(date -d 2024-02-28 +%s); d1=$(date -d 2025-09-16 +%s)
+  for ((i = 0; i < n; i++)); do
+    a=$(date -d @$((d0 + (d1 - d0) / 86400 * i / n * 86400)) +%F)
+    b=$(date -d @$((d0 + ((d1 - d0) / 86400 * (i + 1) / n - (i + 1 < n ? 1 : 0)) * 86400)) +%F)
+    echo "$a $b"
+  done
+}
+i=0; while read -r a b; do i=$((i + 1))
+  CMD[mepspl$i]="scripts/download_meps.py --pl --start $a --end $b $PL_LEADS"
+  LOG[mepspl$i]=$W/meps_pl/logs/dl_$i.log
+done < <(chunks 4)
+i=0; while read -r a b; do i=$((i + 1))
+  CMD[aromepl$i]="scripts/download_meps.py --pl --model arome_arctic --start $a --end $b $PL_LEADS"
+  LOG[aromepl$i]=$W/arome_arctic_pl/logs/dl_$i.log
+done < <(chunks 6)
+
 echo "job $SLURM_JOB_ID on $(hostname), streams: ${STREAMS[*]}, resubmit $N/$MAX_RESUBMIT"
 declare -A PID
 for s in "${STREAMS[@]}"; do

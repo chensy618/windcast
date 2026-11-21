@@ -57,6 +57,7 @@ and test (NaN elsewhere), plus history.json.
 import argparse
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -68,10 +69,22 @@ import torch.nn.functional as F
 from windcast.station_correction import SX_DIRS, station_groups, upwind
 
 ROOT = Path("/cluster/work/projects/nn8106k/siyan/windcast")
-DATA = ROOT / "cache" / "multimodel_2024-03-01_2025-09-12"
-RUNS = ROOT / "runs_a1"
+# Sample period (env WINDCAST_PERIOD): sets the sample files, the train / val / test split and
+# the runs directory. The default is the period of the A1-A3 and dual-GNO experiments.
+PERIODS = {
+    "2024-03-01_2025-09-12": {"train": ("2024-03-01", "2024-12-31"), "val": ("2025-01-01", "2025-03-31"),
+                              "test": ("2025-04-01", "2025-09-12")},
+    "2024-03-01_2026-11-14": {"train": ("2024-03-01", "2025-12-31"), "val": ("2026-01-01", "2026-03-31"),
+                              "test": ("2026-04-01", "2026-11-14")},
+}
+DEFAULT_PERIOD = "2024-03-01_2025-09-12"
+TAG = os.environ.get("WINDCAST_PERIOD", DEFAULT_PERIOD)
+SPLIT = PERIODS[TAG]
+RUN_SFX = "" if TAG == DEFAULT_PERIOD else f"_{TAG}"
+DATA = ROOT / "cache" / f"multimodel_{TAG}"
+RUNS = ROOT / f"runs_a1{RUN_SFX}"
 TERRAIN = ROOT / "cache" / "station_terrain.npz"
-GRID_FILE = ROOT / "cache" / "multimodel_2024-03-01_2025-09-12_grid.npy"
+GRID_FILE = ROOT / "cache" / f"multimodel_{TAG}_grid.npy"
 # 100 m descriptors at the stations, by source (--terrain100):
 #   mtno   the station point, from the mtno 50 m DTM patches (windcast tmp/terrain100.py)
 #   point  the station point, from the 100 m grid of scripts/build_terrain_100m.py
@@ -89,8 +102,6 @@ T100_FILES["cell300"] = [("station_terrain_c300.npz", ("c300_sx900", "c300_sx3k"
 T100_FILES["both300"] = T100_FILES["point300"] + T100_FILES["cell300"]
 T100_SUFFIX = {"mtno": "_t100", "point": "_p100", "cell": "_c100", "both": "_pc100",
                "point300": "_p300", "cell300": "_c300", "both300": "_pc300"}
-SPLIT = {"train": ("2024-03-01", "2024-12-31"), "val": ("2025-01-01", "2025-03-31"),
-         "test": ("2025-04-01", "2025-09-12")}
 N_GROUPS = 5  # station_groups() default
 N_GROUPS_NORDIC = 3  # extra groups for the Swedish / Finnish stations (--stations ext)
 
@@ -103,14 +114,17 @@ def use_stations(tag):
     global DATA, TERRAIN, TERRAIN100
     sfx = "" if tag == "base" else f"_{tag}"
     TERRAIN100 = ROOT / "cache" / f"station_terrain_100m{sfx}.npz"
-    DATA = ROOT / "cache" / f"multimodel_2024-03-01_2025-09-12{sfx}"
+    DATA = ROOT / "cache" / f"multimodel_{TAG}{sfx}"
     TERRAIN = ROOT / "cache" / f"station_terrain{sfx}.npz"
 
 
 def use_group(group):
     """Input models: 'ecmwf' (IFS + AIFS, default) or a group of scripts/build_group_samples.py
-    ('nwp': IFS, GFS, MEPS, AROME-Arctic; 'mlwp': AIFS, GraphCast, Pangu, FourCastNet). Same runs,
-    stations and obs; base stations only. The residual is against the mean of the group's models."""
+    ('nwp': IFS, GFS, MEPS, AROME-Arctic; 'mlwp': AIFS, GraphCast, Pangu, FourCastNet; 'mix':
+    IFS, AIFS, MEPS, AROME-Arctic, the union of 'ecmwf' and 'lam' on the 0.25 deg grid) or 'lam'
+    (MEPS and AROME-Arctic only, on a 2.5 km grid of the working plane, scripts/build_lam_samples.py;
+    the operator then runs on that grid). Same runs, stations and obs; base stations only. The
+    residual is against the mean of the group's models."""
     global DATA, GRID_FILE
     if group != "ecmwf":
         DATA = DATA.with_name(DATA.name + f"_{group}")
@@ -142,14 +156,34 @@ def plane(lon, lat):
 
 
 class Data:
-    def __init__(self, device, terrain=False, use_obs=False, terrain100=None):
+    def __init__(self, device, terrain=False, use_obs=False, terrain100=None, fields=None, need_grid=True):
         d = dict(np.load(f"{DATA}.npz", allow_pickle=True))
         self.grid = np.load(GRID_FILE, mmap_mode="r")             # shared by both station sets
+        # grid fields used (--fields): all of the file, or the named ones (u, v must stay first)
+        names = [str(x) for x in d.get("fields", ["10u", "10v", "2t", "msl"])]
+        self.fields = names if fields is None else list(fields)
+        assert self.fields[:2] == ["10u", "10v"], self.fields
+        self.fsel = np.array([names.index(f) for f in self.fields])
+        self.C = len(self.fsel)
+        self.need_grid = need_grid
+        if "grid_x" in d and need_grid:
+            # the 2.5 km grid (tens of GB) is read into memory once: random reads of the memmap
+            # from Lustre leave the GPU idle
+            mm, t0 = self.grid, time.time()
+            arr = np.empty(mm.shape[:3] + (self.C,) + mm.shape[4:], np.float16)
+            for i in range(0, len(mm), 32):
+                arr[i:i + 32] = mm[i:i + 32][:, :, :, self.fsel]
+            self.grid, self.fsel = arr, np.arange(self.C)
+            print(f"grid in memory: {arr.nbytes / 1e9:.1f} GB in {time.time() - t0:.0f} s", flush=True)
         self.inits = pd.DatetimeIndex(d["inits"])
         self.leads = d["leads"]
         N, L, M, S, _ = d["st_fc"].shape
         self.N, self.L, self.M, self.S = N, L, M, S
-        lat, lon = d["lat"], d["lon"]
+        self.km_grid = "grid_x" in d          # 'lam': grid in km of the working plane, not lat / lon
+        if self.km_grid:
+            lat, lon = d["grid_y"], d["grid_x"]
+        else:
+            lat, lon = d["lat"], d["lon"]
         self.H, self.W = len(lat), len(lon)
         tindex = pd.Index(d["time"])
         ti = tindex.get_indexer(self.inits)
@@ -168,17 +202,23 @@ class Data:
                                   & d["keep"])[0] for k, (a, b) in SPLIT.items()}
         tr = self.split["train"]
         # normalisation (train)
-        g = np.asarray(self.grid[tr[::4]], dtype=np.float32)                # (n, L, M, C, H, W)
+        g = np.asarray(self.grid[tr[::16 if self.km_grid else 4]][:, :, :, self.fsel], dtype=np.float32)  # (n, L, M, C, H, W)
         self.g_mean = g.mean((0, 1, 4, 5)).reshape(1, -1, 1, 1)             # (1, M*C, 1, 1)
         self.g_std = g.std((0, 1, 4, 5)).reshape(1, -1, 1, 1) + 1e-6
         self.omf_std = float(np.nanstd(omf[tr]))
         self.y_std = float(np.nanstd(self.y[tr]))
         # geometry
         LON, LAT = np.meshgrid(lon, lat)
-        self.grid_p = torch.tensor(plane(LON, LAT), dtype=torch.float32, device=device)       # (H, W, 2)
-        self.st_p = torch.tensor(plane(d["lon_st"], d["lat_st"]), dtype=torch.float32, device=device)
-        fi = (d["lat_st"] - lat[0]) / (lat[1] - lat[0])
-        fj = (d["lon_st"] - lon[0]) / (lon[1] - lon[0])
+        if self.km_grid:        # LON / LAT are x / y km; GNO coordinates in 1000 km
+            self.grid_p = torch.tensor(np.stack([LON, LAT], -1) / 1000.0, dtype=torch.float32, device=device)
+            self.st_p = torch.tensor(d["xy"] / 1000.0, dtype=torch.float32, device=device)
+            fi = (d["xy"][:, 1] - lat[0]) / (lat[1] - lat[0])
+            fj = (d["xy"][:, 0] - lon[0]) / (lon[1] - lon[0])
+        else:
+            self.grid_p = torch.tensor(plane(LON, LAT), dtype=torch.float32, device=device)   # (H, W, 2)
+            self.st_p = torch.tensor(plane(d["lon_st"], d["lat_st"]), dtype=torch.float32, device=device)
+            fi = (d["lat_st"] - lat[0]) / (lat[1] - lat[0])
+            fj = (d["lon_st"] - lon[0]) / (lon[1] - lon[0])
         self.st_ij = (np.rint(fi).astype(int), np.rint(fj).astype(int))
         self.st_sample = torch.tensor(np.stack([fj / (self.W - 1) * 2 - 1, fi / (self.H - 1) * 2 - 1], -1),
                                       dtype=torch.float32, device=device)  # grid_sample (x, y)
@@ -224,7 +264,7 @@ class Data:
         1 km and 10 km (8, H1+, W1+) for the upwind shelter, and the grid_sample coordinates of
         every 1 km cell in the 0.25 deg grid (H1+, W1+, 2). patches() cuts P x P patches from
         them; the station patches (centred on each station's 1 km cell) are cut once here."""
-        assert P % 2 == 1
+        assert P % 2 == 1 and not self.km_grid
         dev, r = self.device, P // 2
         t = np.load(TERRAIN_GRID, allow_pickle=True)
         names = [str(x) for x in t["names"]]
@@ -247,7 +287,7 @@ class Data:
         self._off = (off[:, None], off[None, :])
         ij = np.load(TERRAIN, allow_pickle=True)["ij"]
         self.st_patch = self.patches(ij[:, 0], ij[:, 1])
-        C = self.grid.shape[3]
+        C = self.C
         self.uv_ch = [(m * C, m * C + 1) for m in range(self.M)]     # (u, v) of each model in g
         self.P = P
         self.n_fine_in = self.M * C + 1 + 2 + Fg.shape[0] + 5
@@ -272,8 +312,11 @@ class Data:
         With terrain inputs the station features are the point features (B, S, n_point)
         and in_mask is ignored."""
         dev = self.device
-        g = np.asarray(self.grid[n, l], dtype=np.float32).reshape(len(n), -1, self.H, self.W)
-        g = torch.tensor((g - self.g_mean) / self.g_std, device=dev)
+        if self.need_grid:
+            g = np.asarray(self.grid[n, l][:, :, self.fsel], dtype=np.float32).reshape(len(n), -1, self.H, self.W)
+            g = torch.tensor((g - self.g_mean) / self.g_std, device=dev)
+        else:   # the point-wise network alone does not see the grid
+            g = None
         tf = torch.tensor(self.time_features(n, l), dtype=torch.float32, device=dev)
         if self.terrain:
             pt = np.concatenate([self.pt_dyn[n, l],
@@ -681,11 +724,13 @@ def main():
     ap.add_argument("--stations", default="base", choices=["base", "ext", "all"],
                     help="ext: + Swedish / Finnish stations (groups 5-7); all: + Trondelag (group 8); "
                          "run name + _<stations>")
-    ap.add_argument("--group", default="ecmwf", choices=["ecmwf", "nwp", "mlwp"],
+    ap.add_argument("--group", default="ecmwf", choices=["ecmwf", "nwp", "mlwp", "mix", "lam"],
                     help="input models (use_group); run name + _<group>")
+    ap.add_argument("--fields", nargs="+", default=None,
+                    help="grid fields used (default: all of the group's file; 10u 10v first); run name + _f<count>")
     a = ap.parse_args()
     use_stations(a.stations)
-    assert a.group == "ecmwf" or a.stations == "base"
+    assert a.group in ("ecmwf", "mix") or a.stations == "base"   # mix: build_group_samples.py --stations ext
     use_group(a.group)
     assert a.setting == "including" or 0 <= a.fold < {"base": N_GROUPS, "ext": N_GROUPS + N_GROUPS_NORDIC,
                                                        "all": N_GROUPS + N_GROUPS_NORDIC + 1}[a.stations]
@@ -696,7 +741,8 @@ def main():
     rng = np.random.default_rng(a.seed)
     dev = torch.device("cuda")
     assert not a.terrain100 or terrain
-    D = Data(dev, terrain=terrain, use_obs=a.inputs == "both", terrain100=a.terrain100)
+    D = Data(dev, terrain=terrain, use_obs=a.inputs == "both", terrain100=a.terrain100, fields=a.fields,
+             need_grid=a.model != "point")
     if a.fine:
         assert a.inputs == "terrain" and a.model in GRID_MODELS and not a.terrain100
         D.setup_fine(a.patch)
@@ -708,6 +754,8 @@ def main():
         name += f"_{a.stations}"
     if a.group != "ecmwf":
         name += f"_{a.group}"
+    if a.fields:
+        name += f"_f{len(a.fields)}"
     if a.terrain100:
         name += T100_SUFFIX[a.terrain100]
     assert not a.pretrain_meps or a.fine

@@ -192,6 +192,53 @@ def fetch(d: date, h: int, leads, windows: dict, out: Path):
     out.with_suffix(".tmp").rename(out)
 
 
+def fetch_pl(d: date, h: int, leads, windows: dict, out: Path):
+    """--pl: u, v, t, z on PL_LEVELS (hPa) -> OUT/YYYY/<prefix>_YYYYMMDDTHH.nc with variables
+    u850, v850, t850, z850, ... (lead, y, x); same window as the surface files. The leads are
+    looked up in the file's time axis (MEPS pl: hourly to +24 h, then 3-hourly)."""
+    ds, url = open_run(d, h)
+    try:
+        shape = (len(ds.dimensions["y"]), len(ds.dimensions["x"]))
+        if shape not in windows:
+            windows[shape] = window(ds)
+        sy, sx = windows[shape]
+        ref = float(ds["forecast_reference_time"][:])
+        have = [int(round(x)) for x in (ds["time"][:] - ref) / 3600.0]
+        use = [l for l in leads if l in have]
+        ti = [have.index(l) for l in use]
+        p = [int(round(x)) for x in ds["pressure"][:]]
+        pi = [p.index(L) for L in PL_LEVELS]
+        ps = slice(min(pi), max(pi) + 1)
+        lon, lat = ds["longitude"][sy, sx], ds["latitude"][sy, sx]
+        raw = {}
+        for k, v in PL_VARS.items():
+            var = ds[v]
+            parts = []
+            for s in as_slices(ti):
+                idx = tuple(s if n == "time" else ps if n == "pressure" else sy if n == "y" else sx
+                            for n in var.dimensions)
+                parts.append(np.ma.filled(var[idx].astype("f4"), np.nan))
+            a = np.concatenate(parts, 0)                                  # (lead, level, y, x)
+            for L, j in zip(PL_LEVELS, pi):
+                raw[f"{k}{L}"] = a[:, j - ps.start]
+        for L in PL_LEVELS:
+            raw[f"u{L}"], raw[f"v{L}"] = rotate(raw[f"u{L}"], raw[f"v{L}"], lon)
+    finally:
+        ds.close()
+    data = {k: (("lead", "y", "x"), a.astype("f4")) for k, a in raw.items()}
+    xr.Dataset(
+        data,
+        coords={"lead": ("lead", np.asarray(use, "i2")),
+                "lon": (("y", "x"), lon.astype("f8")), "lat": (("y", "x"), lat.astype("f8"))},
+        attrs={"forecast_reference_time": ref, "source": url, "levels_hPa": PL_LEVELS},
+    ).to_netcdf(out.with_suffix(".tmp"), encoding={k: {"zlib": True, "complevel": 3} for k in data})
+    out.with_suffix(".tmp").rename(out)
+
+
+PL_VARS = {"u": "x_wind_pl", "v": "y_wind_pl", "t": "air_temperature_pl", "z": "geopotential_pl"}
+PL_LEVELS = [925, 850, 700, 500]
+
+
 def has_leads(path: Path, leads) -> bool:
     """An existing file counts as done only if it holds every requested lead (or the run
     is shorter: then it holds all the run has, which is not checked here)."""
@@ -249,9 +296,19 @@ def main():
                    help="subset of the output variables (e.g. u10 v10 t2m msl for the hourly samples)")
     p.add_argument("--max-wait-h", type=float, default=48.0,
                    help="hours to wait out a thredds outage before giving up (real time: short)")
+    p.add_argument("--pl", action="store_true",
+                   help="pressure levels instead of the surface: u, v, t, z on PL_LEVELS (fetch_pl); "
+                        "default out ROOT/<model>_pl")
     a = p.parse_args()
     MAX_WAIT_H = a.max_wait_h
     use_model(a.model)
+    global URLS, OUT, GRID_DATES
+    if a.pl:
+        if a.model == "meps":   # the pl aggregation exists for every run of the period
+            URLS = [BASE + "meps_det_pl_{d:%Y%m%d}T{h:02d}Z.ncml", BASE + "meps_det_2_5km_{d:%Y%m%d}T{h:02d}Z.nc",
+                    "https://thredds.met.no/thredds/dodsC/mepslatest/meps_det_2_5km_{d:%Y%m%d}T{h:02d}Z.ncml"]
+            GRID_DATES = (date(2024, 6, 16),)
+        OUT = OUT.with_name(OUT.name + "_pl")
     WIN_KM = WINDOWS[a.window]
     if a.vars:
         VARS = {k: VARS[k] for k in a.vars}
@@ -274,7 +331,7 @@ def main():
                             ds, _ = open_run(g, 0)
                             windows[(ds.dimensions["y"].size, ds.dimensions["x"].size)] = window(ds)
                             ds.close()
-                    with_timeout(fetch, (d, h, a.leads, windows, out), a.timeout)
+                    with_timeout(fetch_pl if a.pl else fetch, (d, h, a.leads, windows, out), a.timeout)
                     n_ok += 1
                     time.sleep(1.0)  # stay under the archive's rate limit
                     print(f"{d} {h:02d}Z ok {time.time() - t0:.0f}s", flush=True)

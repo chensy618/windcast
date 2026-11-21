@@ -54,6 +54,8 @@ def main():
     ap.add_argument("--end", required=True)
     ap.add_argument("--nordic", action="store_true")
     ap.add_argument("--other-counties", action="store_true")
+    ap.add_argument("--stations-like", help="keep exactly the stations of this sample file (same "
+                    "station set and folds as an earlier period) instead of the > 50 %% coverage rule")
     args = ap.parse_args()
     t0, t1 = pd.Timestamp(args.start), pd.Timestamp(args.end)
 
@@ -80,7 +82,7 @@ def main():
         nd = nd[(nd.lat < lat.max() - 0.05) & (nd.lat > lat.min() + 0.05)
                 & (nd.lon > lon.min() + 0.05) & (nd.lon < lon.max() - 0.05)]
         st = pd.concat([st, nd], ignore_index=True)
-        extra = sorted(NORDIC.glob("obs_*.parquet"))
+        extra = sorted(NORDIC.glob("obs_*.parquet")) + sorted((ROOT / "stations" / "nordic_2026").glob("obs_*.parquet"))
     fi, fj = (st.lat.values - lat[0]) / dlat, (st.lon.values - lon[0]) / dlon
     i0, j0 = np.floor(fi).astype(int), np.floor(fj).astype(int)
     a, b = fi - i0, fj - j0
@@ -140,6 +142,11 @@ def main():
     obs[ti[ok], si[ok]] = w.values[ok]
     good = np.isfinite(obs[..., 0]).mean(0) > 0.5
     print(f"stations with > 50 % hourly wind: {good.sum()} / {S}")
+    if args.stations_like:
+        ref = list(np.load(args.stations_like, allow_pickle=True)["station"])
+        good = st.station.isin(ref).values
+        assert list(st.station.values[good]) == ref, "station order differs from --stations-like"
+        print(f"stations as in {args.stations_like}: {good.sum()}")
 
     tag = "_all" if args.other_counties else "_ext" if args.nordic else ""
     added = np.arange(len(st)) >= n_base

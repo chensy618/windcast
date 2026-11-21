@@ -36,7 +36,10 @@ def load_obs(stations, t0, t1, extra=()):
     """Hourly (u, v) per (time, station); `extra`: more parquet files in the same layout
     (scripts/download_nordic_obs.py)."""
     years = range(t0.year, t1.year + 1)
-    files = [f for y in years for f in sorted((ROOT / "stations" / "obs").glob(f"obs_{y}_*.parquet"))]
+    files = []
+    for y in years:   # years without the county files (2026-): the Norway-wide Frost download
+        fy = sorted((ROOT / "stations" / "obs").glob(f"obs_{y}_*.parquet"))
+        files += fy or [f for f in [ROOT / "stations" / "frost_no" / f"obs_{y}.parquet"] if f.exists()]
     files += list(extra)
     o = pd.concat([pd.read_parquet(f, filters=[("element", "in", ["wind_speed", "wind_from_direction"]),
                                                ("level", "==", 10.0), ("quality", "<=", 2)],
