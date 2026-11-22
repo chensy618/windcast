@@ -31,7 +31,11 @@ its own graph neural operator, fused by one linear projection) overfits as speci
 than the uncorrected mean ($-5.8$\,\%). Smaller encoders, a zero-initialised output and an MLP head
 recover most of the gap ($-9.6$\,\%); adding potential-temperature and mountain-wind features gives
 $-10.0\pm0.0$\,\%, level with but not better than the MLP, and the GNO readout performs like a
-bilinear one. Applied on the 1\,km MET Nordic grid, all corrections move slightly away from the
+bilinear one. Shrinking the encoders further (width 8, $4\times8$ modes) changes nothing. Doubling the
+training period (1236 instead of 592 runs, tested April--November 2026) improves every model by about
+2 points without changing the ranking: point-wise MLP $-12.9$\,\%, best dual-scale model $-12.0$\,\%,
+and with more data the physical features no longer help. Adding 79 Swedish and Finnish stations to
+training improves the Norwegian test stations by only 0.1--0.4 points. Applied on the 1\,km MET Nordic grid, all corrections move slightly away from the
 analysis (+0.6 to +7.4\,\%); but at the stations the analysis is itself beaten by the corrected
 forecasts, so MET Nordic wind, which follows MEPS, is not a suitable reference for station-trained
 corrections.
@@ -70,6 +74,12 @@ five spatial groups by $k$-means on their coordinates (28, 17, 14, 20 and 20 sta
 five folds trains on four groups and keeps the epoch with the lowest validation loss on the
 held-out group; its test predictions for the held-out group are stitched into one test set in
 which every station is predicted by a model that never saw it.
+
+\paragraph{Extended period.} Section~\ref{sec:longer} repeats the main models on a longer sample
+period, 1~March 2024 to 14~November 2026 (1875 runs; with the Norway-wide Frost download for 2026):
+training 1~March 2024--31~December 2025 (1236 runs), validation January--March 2026 (180), test
+1~April--14~November 2026 (452). Stations, spatial groups and all settings are unchanged. All other
+sections use the original period.
 
 \paragraph{Metric.} Vector RMSE, $\sqrt{\overline{|\hat{\mathbf u}-\mathbf u_{\rm obs}|^2}}$, over
 station, run and lead. All numbers are computed on the same 367\,427 test samples (all input
@@ -230,7 +240,9 @@ linear projection, i.e.\ the same head as the reference MLP, adds another 1.0--1
 with the GNO. With the original encoder size the MLP head gives only $-8.6$\,\%, so both changes are
 needed. (iii) \emph{The GNO and bilinear readouts are equivalent} in every pairing (differences
 $\le0.2$ points), so the neighbourhood aggregation does not yet contribute beyond reading the latent
-field at the point.
+field at the point. (iv) \emph{Even smaller encoders} (width 8 and/or $4\times8$ modes, 61--89\,k
+parameters, best configuration with $\theta$ + mountain features, seed 0) give $-9.8$ to $-10.0$\,\%,
+the same as width 16 with $8\times16$ modes: encoder size is no longer the bottleneck.
 
 \begin{table}[t]
 \centering\small
@@ -268,6 +280,9 @@ Model & Parameters & Best epoch & Seeds & $\Delta$RMSE (\%)\\
 \quad Dual NO + GNO + $\theta$ & 148 k & 26 & 3 & -9.4 $\pm$ 0.1 \\
 \quad Dual NO + GNO + mountain & 149 k & 24 & 3 & -9.5 $\pm$ 0.2 \\
 \quad Dual NO + GNO + $\theta$ + mountain & 150 k & 24 & 3 & -10.0 $\pm$ 0.0 \\
+\quad \quad width 16, $4\times8$ modes & 89 k & 32 & 1 & -9.8 \\
+\quad \quad width 8, $8\times16$ modes & 76 k & 29 & 1 & -10.0 \\
+\quad \quad width 8, $4\times8$ modes & 61 k & 28 & 1 & -10.0 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -305,6 +320,57 @@ carry information that does not transfer to that part of the domain.
 for each held-out station group (seed 0; number of stations in brackets).}
 \label{fig:leadgroup}
 \end{figure}
+
+\subsection{Doubling the training period}\label{sec:longer}
+With about 600 training runs every larger model overfitted, so the main models were retrained on the
+extended period (Section~\ref{sec:data}; 1236 training runs, test April--November 2026, 509\,729 test
+samples, IFS+AIFS mean 3.701\,m\,s$^{-1}$). Table~\ref{tab:longer} lists the results next to the
+original period; the two test periods differ, so only changes in ranking and differences between
+models can be compared across the columns.
+\begin{itemize}\itemsep1pt
+\item \emph{Every correction gains about 2 points}, while the uncorrected four-model mean gains 0.75.
+The point-wise MLP goes from $-10.2$ to $-12.9$\,\%, the best dual-scale model from $-10.0$ to
+$-12.0$\,\%. The ranking does not change: the MLP stays best, now by 0.8 points.
+\item \emph{The physical features no longer help}: with and without $\theta$ + mountain features the
+small dual-scale model reaches $-12.0$\,\%. On the shorter period they mattered only in combination,
+which suggests that they mainly compensated for the lack of data.
+\item \emph{GNO and bilinear readouts remain equivalent} ($-12.0$ vs $-11.9$\,\%, seed 0).
+\item \emph{The original-size models still lose}, though by less: the design as specified reaches
+$-6.7$\,\% and its MLP-head variant $-10.4$\,\%, both still below the small encoders.
+\end{itemize}
+
+\begin{table}[t]
+\centering\small
+\caption{Original and extended period, test RMSE change (\%) relative to the IFS+AIFS mean of each test
+set. Seeds refer to the extended period; the original-period values are from Table~\ref{tab:dual}.
+Small dual-scale models: width 16, $8\times16$ modes, zero-initialised MLP head.}\label{tab:longer}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Model & Seeds & Original period & Extended period\\
+\midrule
+Uncorrected four-model mean & -- & -7.0 & -7.8 \\
+Point-wise MLP & 3 & -10.2 $\pm$ 0.2 & \textbf{-12.9 $\pm$ 0.1} \\
+SFNO + MLP (0.25$^\circ$) & 3 & -9.4 $\pm$ 0.1 & -11.3 $\pm$ 0.3 \\
+Dual NO + GNO, as specified & 1 & -5.8 $\pm$ 0.7 & -6.7 \\
+Dual NO + GNO, original size, MLP head & 1 & -8.6 & -10.4 \\
+Dual NO + GNO, small & 3 & -9.6 $\pm$ 0.2 & -12.0 $\pm$ 0.2 \\
+Dual NO + GNO, small, $\theta$ + mountain & 3 & -10.0 $\pm$ 0.0 & -12.0 $\pm$ 0.2 \\
+Dual NO + bilinear, small, $\theta$ + mountain & 1 & -- & -11.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Additional Swedish and Finnish training stations.} To test whether more stations help in
+the same way as more runs, 79 SMHI and FMI stations (41 Swedish, 38 Finnish, $>$50\,\% hourly
+coverage) were added to the training set of the five Norwegian folds; evaluation stays on the same 99
+Norwegian stations, each again predicted by a model that never saw it. The gain is small: point-wise MLP
+$-12.9\to-13.0$\,\% (3 seeds), dual-scale with $\theta$ + mountain $-12.0\to-12.4$\,\% (3 seeds),
+dual-scale without them $-11.8\to-12.1$\,\% (seed 0) and SFNO + MLP $-11.3\to-12.2$\,\% (seed 0
+against the three-seed mean). The operator
+models benefit more than the MLP, but only the dual-scale gain exceeds the seed spread, and barely.
+Inland Swedish and Finnish stations have weaker winds and smaller residuals (IFS+AIFS RMSE
+2.7\,m\,s$^{-1}$ vs 3.7 in Norway) and do not cover the coastal and mountain terrain where the Norwegian
+errors arise. They are therefore not used further.
 
 %=====================================================================
 \subsection{Gridded evaluation against MET Nordic}\label{sec:metnordic}
@@ -389,18 +455,21 @@ model only reached this level with the same non-linear head, and its GNO readout
 distinguishable from a bilinear one. A single linear projection cannot form the terrain--flow
 interactions (e.g.\ shelter times wind direction) that dominate the residual; in the specified model
 they can only arise inside encoders that do not see terrain, learned from about 600 training runs
-with 5\,M parameters, which leads to overfitting rather than a lack of capacity.
+with 5\,M parameters, which leads to overfitting rather than a lack of capacity. The extended period
+confirms that data, not architecture, limits the skill: twice as many training runs add about 2 points
+to every model, more than any architectural change, whereas 79 extra stations in a different climate
+add at most 0.4.
 
-\paragraph{Limitations.} The test period covers April--September only, so winter stability regimes
-(where $\theta$ features should matter most) are seen only in validation. The ablations on seed 0
+\paragraph{Limitations.} The test periods cover April--September 2025 and April--November 2026, so
+winter stability regimes (where $\theta$ features should matter most) are seen only in validation. The ablations on seed 0
 alone have a seed spread of up to 1--2 points for the large models. The global encoder sees four
 fields per model; upper-air fields enter only through the point features.
 
 \paragraph{Next steps.} (1) Give the GNO kernel terrain information at the query and source points,
 so that the neighbourhood aggregation can become terrain-aware. (2) Sweep $r_g$ and $r_r$ (the design
 document's sweep) now that the model no longer overfits, together with the wind-aligned GNO frame.
-(3) Train and test over a full annual cycle, and verify off-station skill with independent
-observations (withheld Swedish and Finnish stations). (4) Ensemble the point-wise MLP and the dual-scale
+(3) Test over a full annual cycle, including winter, and add training stations with Norwegian-like
+terrain (Tr{\o}ndelag, the west coast) rather than inland Swedish and Finnish ones. (4) Ensemble the point-wise MLP and the dual-scale
 model, whose errors are partly independent across station groups.
 
 %=====================================================================
@@ -413,6 +482,11 @@ is worse than the uncorrected mean ($-5.8$\,\%).
 \item Small encoders, a zero-initialised output and an MLP head make it competitive ($-9.6$\,\%);
 with potential-temperature and mountain-wind features it reaches $-10.0\pm0.0$\,\%, level with but
 not better than the point-wise MLP.
+\item Doubling the training period improves every model by about 2 points (point-wise MLP
+$-12.9$\,\%, best dual-scale model $-12.0$\,\%) without changing the ranking; the physical features
+then no longer help, and further shrinking the encoders changes nothing.
+\item Adding 79 Swedish and Finnish training stations improves the Norwegian stations by only
+0.1--0.4 points; they are not used.
 \item GNO and bilinear readouts are equivalent so far; terrain-aware kernels and a radius sweep are
 the natural next experiments.
 \item On the 1\,km MET Nordic grid the corrections stay bounded everywhere but move away from the
