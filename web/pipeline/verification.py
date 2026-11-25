@@ -6,6 +6,9 @@ Test period 2025-04-01 .. 2025-09-12, runs present in both the ECMWF and the NWP
 station is predicted by the models that did not see its station group (3 seeds, mean RMSE).
 Vector RMSE of (u, v) against the observations; change in % against the IFS + AIFS mean (negative
 = better). Also the uncorrected NWP 4-model mean.
+dual-gno (WindCast): the original-period twin of the deployed model (same run tag, trained on
+2024-03 .. 2024-12, runs_dual), so that it is scored on the same test period as the others; its
+baseline is the IFS + AIFS + MEPS + AROME-Arctic mean.
 Per station ("stations"): the same RMSE at each station alone, mean over the leads, with the number
 of observations it rests on (the panel's "This station" view).
 
@@ -25,6 +28,7 @@ from windcast.station_correction import station_groups  # noqa: E402
 
 ROOT = Path("/cluster/work/projects/nn8106k/siyan/windcast")
 TAG = ROOT / "cache" / "multimodel_2024-03-01_2025-09-12"
+DUAL_TAG = "rg60_rr10_r16m8x16_g16m8x16_z0_head-mlp"      # web/pipeline/dual.py RUN_TAG
 
 
 def main():
@@ -72,6 +76,22 @@ def main():
             per_st[f"{g}-{name}"] = np.mean(ss, 0)
             out["configs"][f"{g}-{name}"] = dict(rmse=r.round(3).tolist(), change_pct=((r / r0 - 1) * 100).round(2).tolist())
             print(f"{g}-{name}: mean change {np.mean((r / r0 - 1) * 100):.2f} %")
+    # WindCast: the dual-scale GNO, held-out predictions of its 5 folds x 3 seeds
+    S = len(st_ids)
+    rs, ss = [], []
+    for s in range(3):
+        acc = None
+        for k in range(5):
+            z = np.load(ROOT / "runs_dual" / f"dual_sfno-fno_g{k}_s{s}_{DUAL_TAG}_lr1e-05" / "pred.npz", allow_pickle=True)
+            t = z["test"][:, :, :S]
+            acc = t if acc is None else np.where(np.isfinite(t), t, acc)
+        p = z["base"][:, :, :S] + acc
+        rs.append(rmse(p))
+        ss.append(rmse_st(p)[0])
+    r = np.mean(rs, 0)
+    per_st["dual-gno"] = np.mean(ss, 0)
+    out["configs"]["dual-gno"] = dict(rmse=r.round(3).tolist(), change_pct=((r / r0 - 1) * 100).round(2).tolist())
+    print(f"dual-gno: mean change {np.mean((r / r0 - 1) * 100):.2f} %")
     out["stations"] = {sid: dict(n=int(n0[i]), **{c: (round(float(v[i]), 3) if np.isfinite(v[i]) else None)
                                                    for c, v in per_st.items()})
                        for i, sid in enumerate(st_ids) if n0[i] > 0}

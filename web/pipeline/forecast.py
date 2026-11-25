@@ -7,8 +7,10 @@ descriptors (windcast/training/train_station_operator.py --inputs terrain --lr 1
     ecmwf-*  IFS + AIFS                         (runs <model>_terrain_g<k>_s<s>_lr1e-05)
     nwp-*    IFS + GFS + MEPS + AROME-Arctic    (runs <model>_terrain_g<k>_s<s>_nwp_lr1e-05)
     *-sfno / *-fno: operator on the 0.25 deg fields + MLP head; *-mlp: MLP head only.
+    dual-gno WindCast: the four-field dual-scale GNO (IFS + AIFS + MEPS + AROME-Arctic), see dual.py
 Each configuration is the mean of 15 models (5 station groups x 3 seeds); the spread is the std
-of their wind speeds. The normalisation of the training data is rebuilt by Data.
+of their wind speeds. The normalisation of the training data is rebuilt by Data (dual-gno: the
+statistics cached by dual.py --prepare).
 
 Inputs at every 1 km cell (static/terrain_descriptors_1km.npz), as in training:
 * global models (IFS, AIFS, GFS): bilinear from the 0.25 deg grid;
@@ -45,6 +47,7 @@ from build_group_samples import FIELDS as NWP_FIELDS, LAMBERT, LAMBERT_VARS, Lam
 from predict_terrain_grid import DESC, Cells  # noqa: E402
 from windcast.geo import to_plane  # noqa: E402
 from windcast.station_correction import upwind  # noqa: E402
+import dual  # noqa: E402  (web/pipeline/dual.py: WindCast, the four-field dual-scale GNO)
 
 ROOT = tso.ROOT
 ECMWF_FIELDS = ["10u", "10v", "2t", "msl", "sp", "t850"]
@@ -53,6 +56,8 @@ GROUP_LABEL = {"ecmwf": "IFS + AIFS", "nwp": "IFS + GFS + MEPS + AROME-Arctic"}
 HEADS = {"sfno": "SFNO + MLP", "fno": "FNO + MLP", "point": "MLP"}
 CONFIGS = {f"{g}-{'mlp' if h == 'point' else h}": dict(group=g, head=h, label=f"{HEADS[h]} · {GROUP_LABEL[g]}")
            for g in GROUPS for h in HEADS}
+GROUP_LABEL["dual"] = "IFS + AIFS + MEPS + AROME-Arctic"
+CONFIGS["dual-gno"] = dict(group="dual", head="gno", label=f"WindCast (dual-scale GNO) · {GROUP_LABEL['dual']}")
 DATA0, GRID0 = tso.DATA, tso.GRID_FILE
 STATIC_VERSION = 3   # bump to rewrite OUT/static
 CROP_SOUTH = 85      # southernmost image rows (km) left blank: the terrain grid has artefacts there
@@ -179,6 +184,33 @@ def run_config(head, group, D, g, tf, cells, wind, chunk=200_000):
     return res
 
 
+def publish(cfg, res, leads, run_dir, H1, W1, land_img, station_fc, configs):
+    """Map images of one configuration and its station forecasts (into station_fc, configs)."""
+    base, corr, spread = res["grid"]
+    cdir = run_dir / cfg
+    cdir.mkdir(exist_ok=True)
+    for k, ld in enumerate(leads):
+        b = base[k].reshape(H1, W1, 2)[::-1]
+        c = corr[k].reshape(H1, W1, 2)[::-1]
+        s1, d1 = speed_dir(b + c)
+        s0, _ = speed_dir(b)
+        ok = np.isfinite(s1)
+        px = np.stack([np.clip(np.rint(np.nan_to_num(s1) / 0.2), 1, 255), np.clip(np.rint(np.nan_to_num(s0) / 0.2), 1, 255),
+                       np.rint(np.nan_to_num(d1) / 360 * 255) % 256], -1).astype(np.uint8)
+        px[~ok | ~land_img] = 0
+        Image.fromarray(np.ascontiguousarray(px)).save(cdir / f"lead_{ld:02d}.webp", lossless=True, method=4)
+    sb, sc, ss = res["st"]
+    s1, d1 = speed_dir(sb + sc)
+    s0, d0 = speed_dir(sb)
+    station_fc[cfg] = dict(speed=s1.T.round(1), dir=d1.T.round(0), raw_speed=s0.T.round(1),
+                           raw_dir=d0.T.round(0), spread=ss.T.round(1))
+    group = CONFIGS[cfg]["group"]
+    configs[cfg] = dict(label=CONFIGS[cfg]["label"], group=group, head=CONFIGS[cfg]["head"],
+                        group_label=GROUP_LABEL[group],
+                        # share of the land shown on the map that has a forecast
+                        coverage=float(np.isfinite(corr[0, :, 0]).reshape(H1, W1)[::-1][land_img].mean().round(3)))
+
+
 def write_static(out, t, names, H1, W1):
     """Background hillshade (land), elevation for the 3D view, and the grid geometry; rows north -> south."""
     st = out / "static"
@@ -259,29 +291,29 @@ def main():
                           dtype=torch.float32, device=dev)
         for cfg in todo:
             res = run_config(CONFIGS[cfg]["head"], group, D, g, tf, cells, wind)
-            base, corr, spread = res["grid"]
-            cdir = run_dir / cfg
-            cdir.mkdir(exist_ok=True)
-            for k, ld in enumerate(leads):
-                b = base[k].reshape(H1, W1, 2)[::-1]
-                c = corr[k].reshape(H1, W1, 2)[::-1]
-                s1, d1 = speed_dir(b + c)
-                s0, _ = speed_dir(b)
-                ok = np.isfinite(s1)
-                px = np.stack([np.clip(np.rint(np.nan_to_num(s1) / 0.2), 1, 255), np.clip(np.rint(np.nan_to_num(s0) / 0.2), 1, 255),
-                               np.rint(np.nan_to_num(d1) / 360 * 255) % 256], -1).astype(np.uint8)
-                px[~ok | ~land_img] = 0
-                Image.fromarray(np.ascontiguousarray(px)).save(cdir / f"lead_{ld:02d}.webp", lossless=True, method=4)
-            sb, sc, ss = res["st"]
-            s1, d1 = speed_dir(sb + sc)
-            s0, d0 = speed_dir(sb)
-            station_fc[cfg] = dict(speed=s1.T.round(1), dir=d1.T.round(0), raw_speed=s0.T.round(1),
-                                   raw_dir=d0.T.round(0), spread=ss.T.round(1))
-            configs[cfg] = dict(label=CONFIGS[cfg]["label"], group=group, head=CONFIGS[cfg]["head"],
-                                group_label=GROUP_LABEL[group], coverage=float(np.isfinite(corr[0]).mean().round(3)))
+            publish(cfg, res, leads, run_dir, H1, W1, land_img, station_fc, configs)
             print(f"{cfg} done ({time.time() - t0:.0f} s)", flush=True)
         del D
         torch.cuda.empty_cache()
+
+    if "dual-gno" in a.configs:
+        if not dual.available(init):
+            print("dual-gno: inputs missing for", init, flush=True)
+        else:
+            t0 = time.time()
+            land = t["fields"][names.index("land_fraction")] > 0
+            terr = t["fields"].reshape(len(names), -1).T.astype(np.float64)
+            terr[~land.reshape(-1)] = np.nan                     # sea: no forecast shown, not computed
+            cells = {"grid": (t["lat"].reshape(-1).astype(float), t["lon"].reshape(-1).astype(float),
+                              t["xy"].reshape(-1, 2).astype(float), terr),
+                     "st": (t["lat"][ij[:, 0], ij[:, 1]].astype(float), t["lon"][ij[:, 0], ij[:, 1]].astype(float),
+                            t["xy"][ij[:, 0], ij[:, 1]].astype(float), t["fields"][:, ij[:, 0], ij[:, 1]].T.astype(np.float64))}
+            res = dual.forecast(init, cells, dev)
+            dl = [int(x) for x in np.load(dual.STATS)["leads"]]
+            assert leads is None or dl == leads, (dl, leads)
+            leads = dl
+            publish("dual-gno", res, leads, run_dir, H1, W1, land_img, station_fc, configs)
+            print(f"dual-gno done ({time.time() - t0:.0f} s)", flush=True)
 
     assert configs, f"no configuration could be run for {init}"
     meta = pd.read_parquet(ROOT / "stations" / "stations.parquet").drop_duplicates("station").set_index("station")

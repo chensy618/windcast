@@ -8,7 +8,8 @@ Run on a GPU node (web/slurm/realtime.slurm, scheduled by web/slurm/scrontab.txt
 2. downloads into ROOT (skipping existing files): IFS and AIFS (ECMWF open data), GFS (NOAA AWS),
    MEPS and AROME-Arctic (MET Norway thredds, archive or "latest" catalogue), 0-66 h every 6 h;
 3. web/pipeline/forecast.py for the configurations whose inputs exist (nwp-* need all four NWP
-   models; if one is missing the ECMWF configurations are still published);
+   models, dual-gno IFS, AIFS, MEPS and AROME-Arctic; if one is missing the ECMWF configurations
+   are still published);
 4. web/pipeline/observations.py, runs/index.json (newest first) and the deletion of older runs;
 5. if WINDCAST_DEPLOY is set, it is run as a shell command afterwards (e.g. an rsync of OUT to
    the web server).
@@ -27,8 +28,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO), str(REPO / "scripts")]
 from build_group_samples import path as group_path  # noqa: E402
 
-GROUPS = {"ecmwf": ["ifs", "aifs"], "nwp": ["ifs", "gfs", "meps", "arome_arctic"]}
-N_CONFIGS = 6
+GROUPS = {"ecmwf": ["ifs", "aifs"], "nwp": ["ifs", "gfs", "meps", "arome_arctic"],
+          "dual": ["ifs", "aifs", "meps", "arome_arctic"]}          # dual-gno: WindCast (web/pipeline/dual.py)
+N_CONFIGS = 7
 LEADS6 = [str(x) for x in range(0, 67, 6)]
 
 
@@ -69,7 +71,8 @@ def main():
     if not done:
         have = download(init)
         print("inputs:", have, flush=True)
-        configs = [c for g, ok in have.items() if ok for c in (f"{g}-sfno", f"{g}-fno", f"{g}-mlp")]
+        configs = [c for g, ok in have.items() if ok
+                   for c in (["dual-gno"] if g == "dual" else [f"{g}-sfno", f"{g}-fno", f"{g}-mlp"])]
         # an earlier partial run is redone only if more configurations are possible now
         before = len(json.loads(fc.read_text())["configs"]) if fc.exists() else 0
         if configs and len(configs) > before:

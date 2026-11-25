@@ -16,6 +16,7 @@ web/
   pipeline/
     run_latest.py       one real-time cycle: downloads -> forecasts -> observations -> index
     forecast.py         forecasts of one run for every configuration (GPU)
+    dual.py             WindCast (dual-scale GNO): inputs, models, cached normalisation
     observations.py     Frost station observations of the runs on the site (hourly)
     verification.py     held-out scores of the configurations (once, after training)
   slurm/
@@ -28,6 +29,7 @@ web/
 
 | id | input forecasts | network |
 |---|---|---|
+| `dual-gno` | IFS, AIFS, MEPS, AROME-Arctic | WindCast: SFNO (0.25°) + FNO (2.5 km) encoders, GNO readout 60 / 10 km, MLP head |
 | `nwp-mlp` | IFS, GFS, MEPS, AROME-Arctic | MLP head on the 1 km terrain descriptors |
 | `nwp-sfno` | IFS, GFS, MEPS, AROME-Arctic | SFNO on the 0.25° fields + MLP head |
 | `nwp-fno` | IFS, GFS, MEPS, AROME-Arctic | FNO on the 0.25° fields + MLP head |
@@ -39,12 +41,22 @@ Each is the mean of the 15 trained models (5 held-out station groups x 3 seeds) 
 `windcast/training/train_station_operator.py --inputs terrain --lr 1e-5 [--group nwp]`.
 The `nwp-*` forecasts exist only inside the MEPS window (about 70 % of the map).
 
+`dual-gno` is the four-field dual-scale GNO of `windcast/training/train_dual_gno.py` (run tag
+`rg60_rr10_r16m8x16_g16m8x16_z0_head-mlp`), trained on the extended period (2024-03 .. 2025-12,
+`runs_dual_2024-03-01_2026-11-14`), the mean of its 15 models. It covers the cells inside the
+2.5 km grid of `scripts/build_lam_samples.py`. Its normalisation is cached once with
+`python web/pipeline/dual.py --prepare` (CPU, no torch); `--check <init>` rebuilds the inputs of a
+training run from the downloaded files and compares them with the training cache. On the
+"How good is it" panel it is scored by its original-period twin (trained 2024-03 .. 2024-12), on
+the same test period as the other configurations.
+
 ## Real-time pipeline
 
 ```bash
 sbatch web/slurm/realtime.slurm                     # newest 00 / 12 UTC run at least 7 h old
 sbatch web/slurm/realtime.slurm --init 2026-11-18T12
 scrontab web/slurm/scrontab.txt                     # install the schedule
+python web/pipeline/dual.py --prepare               # after retraining WindCast
 python web/pipeline/verification.py                 # after retraining
 ```
 
