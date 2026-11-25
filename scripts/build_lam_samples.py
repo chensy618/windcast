@@ -14,6 +14,9 @@ Fields (all surface fields of the downloaded files; FIELDS): 10u, 10v, 2t, msl (
 of the other groups, first -- then fg10 (gust), rh2m, tcc, tp6 (log1p of the precipitation of the
 6 h before the valid time, kg m-2; 0 at lead 0) and blh (boundary-layer height, m). The trainer
 picks a subset with --fields.
+--fields6: the six fields of the IFS + AIFS samples instead, the same for all four models: 10u, 10v,
+2t, msl, sp (hPa; ROOT/<model>_sfc2, download_meps.py --vars sp skt) and t850 (K; ROOT/<model>_pl,
+download_meps.py --pl) -> multimodel_<TAG>_lam6.npz / _lam6_grid.npy.
 At the stations: the nearest native cell of each model (as in build_group_samples.py).
 Runs where one of the two models is missing get keep = False.
 
@@ -39,6 +42,8 @@ FILE_VARS = {**LAMBERT_VARS, "fg10": "fg10", "rh2m": "rh2m", "tcc": "tcc", "tp6"
 GRID_X = np.arange(-410.0, 450.01, 2.5)
 GRID_Y = np.arange(-340.0, 405.01, 2.5)
 MAX_KM = 2.5   # a grid cell further than this from every native cell is outside the model's window
+FIELDS6 = ["10u", "10v", "2t", "msl", "sp", "t850"]
+EXTRA = {"sp": "_sfc2", "t850": "_pl"}          # fields from the extra downloads: directory suffix
 
 
 class Nearest:
@@ -58,17 +63,24 @@ class Nearest:
 def main():
     # ext: + the Swedish / Finnish stations; the grid does not depend on the stations, so the
     # base grid file is linked and only the station values are read
-    sfx = "_ext" if sys.argv[1:] == ["--stations", "ext"] else ""
-    assert sfx or not sys.argv[1:], "usage: build_lam_samples.py [--stations ext]"
+    global FIELDS
+    args = sys.argv[1:]
+    six = "--fields6" in args
+    args = [x for x in args if x != "--fields6"]
+    sfx = "_ext" if args == ["--stations", "ext"] else ""
+    assert sfx or not args, "usage: build_lam_samples.py [--stations ext] [--fields6]"
+    gsfx = "_lam6" if six else "_lam"
+    if six:
+        FIELDS = FIELDS6
     base = dict(np.load(ROOT / "cache" / f"multimodel_{TAG}{sfx}.npz", allow_pickle=True))
     inits, leads = pd.DatetimeIndex(base["inits"]), [int(x) for x in base["leads"]]
     st_xy = base["xy"].astype(float)
     N, L, M, C, S = len(inits), len(leads), len(MODELS), len(FIELDS), len(base["station"])
     H, W = len(GRID_Y), len(GRID_X)
-    out_grid = ROOT / "cache" / f"multimodel_{TAG}_lam_grid.npy"
+    out_grid = ROOT / "cache" / f"multimodel_{TAG}{gsfx}_grid.npy"
     if sfx:
         grid = NoGrid()
-        base_keep = np.load(ROOT / "cache" / f"multimodel_{TAG}_lam.npz")["keep"]
+        base_keep = np.load(ROOT / "cache" / f"multimodel_{TAG}{gsfx}.npz")["keep"]
     else:
         grid = np.lib.format.open_memmap(out_grid, mode="w+", dtype=np.float16, shape=(N, L, M, C, H, W))
     st_fc = np.full((N, L, M, S, 2), np.nan, np.float32)
@@ -80,7 +92,14 @@ def main():
             f = path(m, t)
             try:
                 ds = netCDF4.Dataset(f)
+                xds = {fn: netCDF4.Dataset(f.parents[1].with_name(f.parents[1].name + d) / f.parent.name / f.name)
+                       for fn, d in EXTRA.items() if fn in FIELDS}
             except (OSError, FileNotFoundError):
+                break
+            xl = {fn: [int(x) for x in x_["lead"][:]] for fn, x_ in xds.items()}
+            if any(ld not in xl[fn] for fn in xds for ld in leads) or \
+                    any(x_["lon"].shape != ds["lon"].shape for x_ in xds.values()):
+                ds.close(); [x_.close() for x_ in xds.values()]
                 break
             with ds:
                 fl = [int(x) for x in ds["lead"][:]]
@@ -96,6 +115,10 @@ def main():
                 read = lambda fn: np.ma.filled(ds[FILE_VARS[fn]][:].astype(np.float32), np.nan)
                 v = []
                 for fn in FIELDS:
+                    if fn in xds:     # extra download: its own lead axis
+                        a = np.ma.filled(xds[fn][fn][:].astype(np.float32), np.nan)[[xl[fn].index(ld) for ld in leads]]
+                        v.append(a / 100.0 if fn == "sp" else a)
+                        continue
                     a = read(fn)
                     if fn == "tp6":   # accumulated since init -> the 6 h before the valid time
                         prev = [fl.index(ld - 6) if ld >= 6 else fl.index(ld) for ld in leads]
@@ -111,6 +134,8 @@ def main():
                     assert m != "meps", "station outside MEPS"
                     st_fc[n, :, k, out_] = st_fc[n, :, 0, out_]
                 vals[m] = (v[:, :, near[m].idx], near[m].inside)
+            for x_ in xds.values():
+                x_.close()
         if len(vals) < M:
             keep[n] = False
             continue
@@ -124,7 +149,7 @@ def main():
     keep &= np.isfinite(st_fc).all((1, 2, 3, 4))
     if sfx:
         keep &= base_keep
-        link = ROOT / "cache" / f"multimodel_{TAG}{sfx}_lam_grid.npy"
+        link = ROOT / "cache" / f"multimodel_{TAG}{sfx}{gsfx}_grid.npy"
         link.unlink(missing_ok=True)
         link.symlink_to(out_grid.name)
     else:
@@ -133,7 +158,7 @@ def main():
     print(f"lam {MODELS}: runs kept {keep.sum()} / {N} (base {base['keep'].sum()})")
     out = {**base, "models": np.array(MODELS), "fields": np.array(FIELDS), "keep": keep, "st_fc": st_fc,
            "grid_x": GRID_X, "grid_y": GRID_Y}
-    np.savez_compressed(ROOT / "cache" / f"multimodel_{TAG}{sfx}_lam.npz", **out)
+    np.savez_compressed(ROOT / "cache" / f"multimodel_{TAG}{sfx}{gsfx}.npz", **out)
     print("done", out_grid)
 
 

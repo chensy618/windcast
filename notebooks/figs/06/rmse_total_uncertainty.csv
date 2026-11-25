@@ -1,0 +1,13 @@
+period,forecast,RMSE,bootstrap s.d.,seed s.d.
+original,IFS,3.562,0.033,
+original,AIFS,3.541,0.035,
+original,MEPS,3.564,0.036,
+original,AROME-Arctic,3.552,0.035,
+original,MET Nordic analysis,3.117,0.028,
+original,ours,3.153,0.029,0.007
+extended,IFS,3.772,0.037,
+extended,AIFS,3.746,0.038,
+extended,MEPS,3.76,0.035,
+extended,AROME-Arctic,3.655,0.032,
+extended,MET Nordic analysis,3.332,0.032,
+extended,ours,3.256,0.028,0.009

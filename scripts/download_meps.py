@@ -75,6 +75,9 @@ VARS = {  # output name: MEPS variable (any extra level / member dims: index 0)
     "msl": "air_pressure_at_sea_level", "tcc": "cloud_area_fraction",
     "tp_acc": "precipitation_amount_acc",  # accumulated since init, kg m-2
     "blh": "atmosphere_boundary_layer_thickness",
+    # surface pressure and surface (skin) temperature, for the stability inputs; fetched alone
+    # into separate directories (--vars sp skt --out ROOT/<model>_sfc2)
+    "sp": "surface_air_pressure", "skt": "air_temperature_0m",
 }
 
 
@@ -178,7 +181,8 @@ def fetch(d: date, h: int, leads, windows: dict, out: Path):
         missing = set(VARS) - set(raw)
         if missing:
             raise KeyError(f"variables not in {url}: {sorted(missing)}")
-        raw["u10"], raw["v10"] = rotate(raw["u10"], raw["v10"], lon)
+        if "u10" in raw:
+            raw["u10"], raw["v10"] = rotate(raw["u10"], raw["v10"], lon)
         data = {k: (("lead", "y", "x"), a.astype("f4")) for k, a in raw.items()}
         ref = float(ds["forecast_reference_time"][:])
     finally:

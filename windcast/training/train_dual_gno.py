@@ -21,6 +21,9 @@ normalisation). Neighbour lists are fixed (fixed grids and stations) and compute
 --wind-frame rotates the displacement into (along, cross) the four-model mean 10 m wind at x
 (unrotated where the wind is below 1 m/s). --readout bilinear replaces both GNOs by bilinear
 sampling of the latent fields at x (control). --branches global|regional drops one branch.
+--models ifs,aifs,meps,arome (any subset) restricts everything to those models: the encoder inputs,
+the point forecast winds and the baseline (the residual is against the mean of the chosen models);
+a branch without chosen models is dropped. Not combined with --phys (built from the four-model mean).
 
 Encoder inputs: u10, v10, t2m, MSLP of both models of the branch (z-scored, train statistics) +
 5 time channels (lead / 66, hour and day-of-year sin / cos of the valid time). No coordinate
@@ -59,17 +62,20 @@ TERRAIN = ROOT / "cache" / "station_terrain.npz"
 PHYS = ROOT / "cache" / f"station_physics_{TAG}.npz"
 RUNS = ROOT / f"runs_dual{RUN_SFX}"
 FIELDS = ["10u", "10v", "2t", "msl"]
+MODELS = ["ifs", "aifs", "meps", "arome"]                 # the order of the four-model samples
+FIELDS6 = ["10u", "10v", "2t", "msl", "sp", "t850"]       # --fields6: the same six fields for all four models
 G_ENCODERS = ["sfno", "fno", "tfno", "uno"]
 R_ENCODERS = ["fno", "tfno", "uno", "localno"]
 
 
 class DualData:
-    def __init__(self, device, phys="none", stations="base"):
+    def __init__(self, device, phys="none", stations="base", models=tuple(MODELS), fields6=False):
         # stations 'ext': + the Swedish / Finnish stations (build_multimodel_samples.py --nordic,
         # build_lam_samples.py --stations ext, ...); their spatial groups are 5..7 (groups_for)
         sfx = "" if stations == "base" else f"_{stations}"
         data_g = DATA_G.with_name(DATA_G.name + sfx)
-        data_r = DATA_G.with_name(DATA_G.name + sfx + "_lam")
+        data_r = DATA_G.with_name(DATA_G.name + sfx + ("_lam6" if fields6 else "_lam"))   # build_lam_samples.py [--fields6]
+        self.fields = FIELDS6 if fields6 else FIELDS
         terrain = TERRAIN.with_name(f"station_terrain{sfx}.npz")
         phys_file = PHYS.with_name(PHYS.stem + sfx + ".npz")
         dg = dict(np.load(f"{data_g}.npz", allow_pickle=True))
@@ -81,9 +87,15 @@ class DualData:
         N, L, Mg, S, _ = dg["st_fc"].shape
         self.N, self.L, self.S = N, L, S
         keep = dg["keep"] & dr["keep"]
+        assert [str(m) for m in dg["models"]] == ["ifs", "aifs"]
+        assert [str(m) for m in dr["models"]] == ["meps", "arome_arctic"]
+        self.models = [m for m in MODELS if m in models]
+        assert self.models and len(self.models) == len(models), models
+        self.msel_g = [i for i, m in enumerate(MODELS[:2]) if m in self.models]
+        self.msel_r = [i for i, m in enumerate(MODELS[2:]) if m in self.models]
 
-        # four-model mean baseline and residual target
-        fc = np.concatenate([dg["st_fc"], dr["st_fc"]], 2)                    # (N, L, 4, S, 2)
+        # baseline (mean of the chosen models; same runs for every subset) and residual target
+        fc = np.concatenate([dg["st_fc"], dr["st_fc"]], 2)[:, :, [MODELS.index(m) for m in self.models]]  # (N, L, M, S, 2)
         self.base = fc.mean(2)
         ti = pd.Index(dg["time"]).get_indexer(self.inits)
         o_valid = np.stack([dg["obs"][ti + ld] for ld in self.leads], 1)     # (N, L, S, 2)
@@ -94,11 +106,16 @@ class DualData:
         self.y_std = float(np.nanstd(self.y[tr]))
 
         # grids in memory (float16), z-scored per channel with train statistics
-        self.grid_g, self.gmu, self.gsd = self._grid(data_g, dg, tr, step=4)
-        self.grid_r, self.rmu, self.rsd = self._grid(data_r, dr, tr, step=16)
         self.Hg, self.Wg = len(dg["lat"]), len(dg["lon"])
         self.Hr, self.Wr = len(dr["grid_y"]), len(dr["grid_x"])
-        self.Cg, self.Cr = self.grid_g.shape[2] * self.grid_g.shape[3], self.grid_r.shape[2] * self.grid_r.shape[3]
+        self.grid_g = self.grid_r = None
+        self.Cg = self.Cr = 0
+        if self.msel_g:
+            self.grid_g, self.gmu, self.gsd = self._grid(data_g, dg, tr, step=4, msel=self.msel_g)
+            self.Cg = self.grid_g.shape[2] * self.grid_g.shape[3]
+        if self.msel_r:
+            self.grid_r, self.rmu, self.rsd = self._grid(data_r, dr, tr, step=16, msel=self.msel_r)
+            self.Cr = self.grid_r.shape[2] * self.grid_r.shape[3]
 
         # geometry in the LAEA plane (km)
         LON, LAT = np.meshgrid(dg["lon"], dg["lat"])
@@ -124,11 +141,13 @@ class DualData:
         assert (t["station"] == dg["station"]).all()
         val = t["values"].astype(np.float64)
         self.pt_static = self._t((val - val.mean(0)) / (val.std(0) + 1e-9))
-        f8 = fc.transpose(0, 1, 3, 2, 4).reshape(N, L, S, -1)                 # (N, L, S, 8)
+        f8 = fc.transpose(0, 1, 3, 2, 4).reshape(N, L, S, -1)                 # (N, L, S, 2M)
+        self.pt_fc_mu, self.pt_fc_sd = np.nanmean(f8[tr], (0, 1, 2)), np.nanstd(f8[tr], (0, 1, 2)) + 1e-9
         self.pt_fc = self._z(f8, tr)
         self.uv_mean = self.base.astype(np.float32)                           # for --wind-frame
         self.phys_names = []
         if phys != "none":
+            assert len(self.models) == 4, "--phys is built from the four-model mean"
             p = np.load(phys_file, allow_pickle=True)
             assert (p["station"] == dg["station"]).all()
             names = [str(x) for x in p["names"]]
@@ -136,7 +155,7 @@ class DualData:
                    "all": names}[phys]
             self.phys_names = sel
             self.pt_phys = self._z(p["values"][..., [names.index(k) for k in sel]], tr)
-        self.n_point = 28 + 8 + 5 + len(self.phys_names)
+        self.n_point = 28 + 2 * len(self.models) + 5 + len(self.phys_names)
 
     def _t(self, a):
         return torch.tensor(np.asarray(a), dtype=torch.float32, device=self.device)
@@ -146,14 +165,14 @@ class DualData:
         mu, sd = np.nanmean(a[tr], (0, 1, 2)), np.nanstd(a[tr], (0, 1, 2)) + 1e-9
         return np.nan_to_num((a - mu) / sd).astype(np.float32)
 
-    def _grid(self, stem, d, tr, step):
+    def _grid(self, stem, d, tr, step, msel):
         mm = np.load(f"{stem}_grid.npy", mmap_mode="r")                      # (N, L, M, C, H, W)
         names = [str(x) for x in d.get("fields", FIELDS)]
-        fsel = [names.index(f) for f in FIELDS]
+        fsel = [names.index(f) for f in self.fields]
         t0 = time.time()
-        arr = np.empty(mm.shape[:3] + (len(fsel),) + mm.shape[4:], np.float16)
+        arr = np.empty(mm.shape[:2] + (len(msel), len(fsel)) + mm.shape[4:], np.float16)
         for i in range(0, len(mm), 32):
-            arr[i:i + 32] = mm[i:i + 32][:, :, :, fsel]
+            arr[i:i + 32] = mm[i:i + 32][:, :, msel][:, :, :, fsel]
         g = arr[tr[::step]].astype(np.float32)
         mu = g.mean((0, 1, 4, 5)).reshape(1, -1, 1, 1)                        # (1, M * C, 1, 1)
         sd = g.std((0, 1, 4, 5)).reshape(1, -1, 1, 1) + 1e-6
@@ -170,12 +189,15 @@ class DualData:
         """Global grid (B, Cg, Hg, Wg), regional grid (B, Cr, Hr, Wr), time (B, 5), point
         features (B, S, n_point - 5) and the mean 10 m wind at the stations (B, S, 2)."""
         B = len(n)
-        xg = (np.asarray(self.grid_g[n, l], np.float32).reshape(B, -1, self.Hg, self.Wg) - self.gmu) / self.gsd
-        xr = (np.asarray(self.grid_r[n, l], np.float32).reshape(B, -1, self.Hr, self.Wr) - self.rmu) / self.rsd
+        xg = xr = None
+        if self.grid_g is not None:
+            xg = self._t((np.asarray(self.grid_g[n, l], np.float32).reshape(B, -1, self.Hg, self.Wg) - self.gmu) / self.gsd)
+        if self.grid_r is not None:
+            xr = self._t((np.asarray(self.grid_r[n, l], np.float32).reshape(B, -1, self.Hr, self.Wr) - self.rmu) / self.rsd)
         pt = [self.pt_static[None].expand(B, -1, -1), self._t(self.pt_fc[n, l])]
         if self.phys_names:
             pt.append(self._t(self.pt_phys[n, l]))
-        return (self._t(xg), self._t(xr), self._t(self.time_features(n, l)), torch.cat(pt, -1),
+        return (xg, xr, self._t(self.time_features(n, l)), torch.cat(pt, -1),
                 self._t(np.nan_to_num(self.uv_mean[n, l])))
 
 
@@ -228,7 +250,7 @@ class GNO(torch.nn.Module):
 class DualGNO(torch.nn.Module):
     def __init__(self, D: DualData, enc_g="sfno", enc_r="fno", width=64, width_r=64, modes_g=(16, 32),
                  modes_r=(16, 32), layers=4, latent=32, rg=60.0, rr=10.0, branches="both",
-                 readout="gno", wind_frame=False, dropout=0.0, zero_init=False, head="linear"):
+                 readout="gno", wind_frame=False, dropout=0.0, zero_init=False, head="linear", head_hidden=128):
         super().__init__()
         self.D, self.branches, self.readout = D, branches, readout
         self.use_g, self.use_r = branches in ("both", "global"), branches in ("both", "regional")
@@ -246,8 +268,9 @@ class DualGNO(torch.nn.Module):
         if head == "linear":                                                  # PDF: single linear projection
             self.proj = torch.nn.Linear(n_feat, 2)
         else:                                                                 # control: same MLP head as TerrainNet
-            self.proj = torch.nn.Sequential(torch.nn.Linear(n_feat, 128), torch.nn.GELU(),
-                                            torch.nn.Linear(128, 128), torch.nn.GELU(), torch.nn.Linear(128, 2))
+            hh = head_hidden
+            self.proj = torch.nn.Sequential(torch.nn.Linear(n_feat, hh), torch.nn.GELU(),
+                                            torch.nn.Linear(hh, hh), torch.nn.GELU(), torch.nn.Linear(hh, 2))
         if zero_init:                                                         # start at the four-model mean
             last = self.proj if head == "linear" else self.proj[-1]
             torch.nn.init.zeros_(last.weight)
@@ -337,6 +360,7 @@ def main():
     ap.add_argument("--dropout", type=float, default=0.0, help="dropout on the operator latents")
     ap.add_argument("--wd", type=float, default=1e-4, help="AdamW weight decay")
     ap.add_argument("--head", default="linear", choices=["linear", "mlp"], help="output head (mlp = control)")
+    ap.add_argument("--head-hidden", type=int, default=128, help="width of the two hidden layers of the MLP head")
     ap.add_argument("--zero-init", action="store_true", help="zero output projection (start at the mean)")
     ap.add_argument("--rg", type=float, default=60.0, help="global GNO radius (km)")
     ap.add_argument("--rr", type=float, default=10.0, help="regional GNO radius (km)")
@@ -345,6 +369,10 @@ def main():
     ap.add_argument("--wind-frame", action="store_true", help="GNO displacement in (along, cross) the mean wind")
     ap.add_argument("--phys", default="none", choices=["none", "theta", "mountain", "all"],
                     help="potential-temperature / mountain-wind point features (build_station_physics.py)")
+    ap.add_argument("--fields6", action="store_true",
+                    help="encoder inputs: 10u, 10v, 2t, msl, sp, t850 of every model (default: the first four); name + _f6")
+    ap.add_argument("--models", default=",".join(MODELS),
+                    help="comma list, subset of ifs,aifs,meps,arome; run name + _m-<models> unless all four")
     ap.add_argument("--stations", default="base", choices=["base", "ext"],
                     help="ext: + the Swedish / Finnish stations (spatial groups 5..7); run name + _ext")
     ap.add_argument("--epochs", type=int, default=40)
@@ -355,8 +383,11 @@ def main():
     torch.manual_seed(a.seed)
     rng = np.random.default_rng(a.seed)
     dev = torch.device("cuda")
-    D = DualData(dev, phys=a.phys, stations=a.stations)
+    models = a.models.split(",")
+    D = DualData(dev, phys=a.phys, stations=a.stations, models=models, fields6=a.fields6)
     assert 0 <= a.fold < D.n_groups
+    if len(D.models) < 4:                    # the branches follow the chosen models
+        a.branches = "both" if D.msel_g and D.msel_r else ("global" if D.msel_g else "regional")
 
     name = f"dual_{a.enc_g}-{a.enc_r}_g{a.fold}_s{a.seed}"
     if a.branches != "both":
@@ -380,8 +411,14 @@ def main():
         name += "_z0"
     if a.head != "linear":
         name += f"_head-{a.head}"
+        if a.head_hidden != 128:
+            name += f"{a.head_hidden}"
     if a.stations != "base":
         name += f"_{a.stations}"
+    if len(D.models) < 4:
+        name += "_m-" + "-".join(D.models)
+    if a.fields6:
+        name += "_f6"
     name += f"_lr{a.lr:g}"
     if a.max_train:
         name += "_smoke"
@@ -389,7 +426,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     model = DualGNO(D, a.enc_g, a.enc_r, width=a.width, width_r=a.width_r, modes_g=tuple(a.modes_g), modes_r=tuple(a.modes_r),
-                    dropout=a.dropout, zero_init=a.zero_init, head=a.head,
+                    dropout=a.dropout, zero_init=a.zero_init, head=a.head, head_hidden=a.head_hidden,
                     rg=a.rg, rr=a.rr, branches=a.branches, readout=a.readout, wind_frame=a.wind_frame).to(dev)
     n_par = sum(p.numel() for p in model.parameters())
     nb = {k: getattr(model, k).n_neighbours for k in ("gno_g", "gno_r") if hasattr(model, k)}
@@ -420,7 +457,7 @@ def main():
     pv = predict(model, D, D.split["val"], a.fold, bs=a.bs)
     pt = predict(model, D, D.split["test"], a.fold, bs=a.bs)
     np.savez_compressed(out / "pred.npz", val=pv, test=pt, base=D.base.astype(np.float32), groups=D.groups,
-                        station=D.station, base_models=np.array(["ifs", "aifs", "meps", "arome_arctic"]))
+                        station=D.station, base_models=np.array(D.models), y_std=D.y_std)
     (out / "history.json").write_text(json.dumps({"args": vars(a), "n_params": n_par, "best_val": best,
                                                   "phys": D.phys_names, "neighbours": nb,
                                                   "history": hist}, indent=1))

@@ -55,9 +55,9 @@ LOG[aifsno]=$W/ecmwf_no/logs/dl_aifs.log
 # takes ~4 min (MEPS) / ~7 min (AROME-Arctic), so the period is cut into date chunks:
 #   sbatch slurm/download.slurm mepspl1 .. mepspl4 aromepl1 .. aromepl6
 PL_LEADS="--leads 0 6 12 18 24 30 36 42 48 54 60 66 --timeout 900"
-chunks() {  # chunks N -> N "start end" ranges of 2024-02-28 .. 2025-09-16
+chunks() {  # chunks N [START END] -> N "start end" ranges of START .. END (default 2024-02-28 .. 2025-09-16)
   local n=$1 d0 d1 i a b
-  d0=$(date -d 2024-02-28 +%s); d1=$(date -d 2025-09-16 +%s)
+  d0=$(date -d "${2:-2024-02-28}" +%s); d1=$(date -d "${3:-2025-09-16}" +%s)
   for ((i = 0; i < n; i++)); do
     a=$(date -d @$((d0 + (d1 - d0) / 86400 * i / n * 86400)) +%F)
     b=$(date -d @$((d0 + ((d1 - d0) / 86400 * (i + 1) / n - (i + 1 < n ? 1 : 0)) * 86400)) +%F)
@@ -72,6 +72,33 @@ i=0; while read -r a b; do i=$((i + 1))
   CMD[aromepl$i]="scripts/download_meps.py --pl --model arome_arctic --start $a --end $b $PL_LEADS"
   LOG[aromepl$i]=$W/arome_arctic_pl/logs/dl_$i.log
 done < <(chunks 6)
+
+# unified wind-related inputs (2026-11-23): the same 15 fields for IFS, AIFS, MEPS, AROME-Arctic
+# (10u, 10v, u / v at 925 / 850 / 700, msl, sp, 2t, skt, t925 / 850 / 700) over the extended
+# sample period 2024-02-28 .. 2026-11-14. Missing so far: surface pressure and skin temperature
+# of the regional models (into <model>_sfc2), their pressure levels after 2025-09-16, and the
+# skin temperature of IFS / AIFS (into ecmwf_skt):
+#   sbatch slurm/download.slurm mepssfc1 mepssfc2 mepssfc3 aromesfc1 aromesfc2 aromesfc3 \
+#          mepsplx1 mepsplx2 mepsplx3 aromeplx1 aromeplx2 aromeplx3 aromeplx4 ifsskt aifsskt
+SFC2="--vars sp skt --leads 0 6 12 18 24 30 36 42 48 54 60 66"
+i=0; while read -r a b; do i=$((i + 1))
+  CMD[mepssfc$i]="scripts/download_meps.py $SFC2 --out $W/meps_sfc2 --start $a --end $b"
+  LOG[mepssfc$i]=$W/meps_sfc2/logs/dl_$i.log
+  CMD[aromesfc$i]="scripts/download_meps.py --model arome_arctic $SFC2 --out $W/arome_arctic_sfc2 --start $a --end $b"
+  LOG[aromesfc$i]=$W/arome_arctic_sfc2/logs/dl_$i.log
+done < <(chunks 3 2024-02-28 2026-11-14)
+i=0; while read -r a b; do i=$((i + 1))
+  CMD[mepsplx$i]="scripts/download_meps.py --pl --start $a --end $b $PL_LEADS"
+  LOG[mepsplx$i]=$W/meps_pl/logs/dlx_$i.log
+done < <(chunks 3 2025-09-14 2026-11-14)
+i=0; while read -r a b; do i=$((i + 1))
+  CMD[aromeplx$i]="scripts/download_meps.py --pl --model arome_arctic --start $a --end $b $PL_LEADS"
+  LOG[aromeplx$i]=$W/arome_arctic_pl/logs/dlx_$i.log
+done < <(chunks 4 2025-09-14 2026-11-14)
+CMD[ifsskt]="scripts/download_ecmwf.py --model ifs --fields skt --out $W/ecmwf_skt --start 2024-02-28 --end 2026-11-14"
+LOG[ifsskt]=$W/ecmwf_skt/logs/dl_ifs.log
+CMD[aifsskt]="scripts/download_ecmwf.py --model aifs --fields skt --out $W/ecmwf_skt --start 2024-03-01 --end 2026-11-14"
+LOG[aifsskt]=$W/ecmwf_skt/logs/dl_aifs.log
 
 echo "job $SLURM_JOB_ID on $(hostname), streams: ${STREAMS[*]}, resubmit $N/$MAX_RESUBMIT"
 declare -A PID

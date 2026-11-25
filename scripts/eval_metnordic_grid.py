@@ -22,7 +22,11 @@ regional models; the station check below measures how close it is to the observa
 Station check: at the stations inside the MET Nordic grid (nearest cell within 1 km), MET Nordic
 vs the observation, next to the four-model mean and MEPS + AROME-Arctic, on the same samples.
 
-OUT ROOT/results/metnordic/grid_eval.npz
+--configs all: every trained four-model dual configuration of the original period (seeds that have
+all 5 folds), not only the three of the report; the raw single models (raw_ifs, raw_aifs, raw_meps,
+raw_arome) are always scored too.
+
+OUT ROOT/results/metnordic/grid_eval.npz (--out for another name)
 """
 import argparse
 import json
@@ -51,6 +55,23 @@ MN = ROOT / "metnordic"
 SMALL = "r16m8x16_g16m8x16_z0"
 DUAL_CFGS = {"dual_gno": "rg60_rr10", "dual_small_mlp": f"rg60_rr10_{SMALL}_head-mlp",
              "dual_small_mlp_phys": f"rg60_rr10_phys-all_{SMALL}_head-mlp"}
+DUAL_ALL = {  # every four-model dual configuration of the original period
+    "dual_bilinear": "bilinear", "dual_gno": "rg60_rr10", "dual_gno_phys": "rg60_rr10_phys-all",
+    "dual_small_bilinear": f"bilinear_{SMALL}", "dual_small_gno": f"rg60_rr10_{SMALL}",
+    "dual_small_bilinear_reg": "bilinear_r16m8x16_g16m8x16_do0.3_wd0.01_z0",
+    "dual_small_gno_reg": "rg60_rr10_r16m8x16_g16m8x16_do0.3_wd0.01_z0",
+    "dual_mlp_bilinear": "bilinear_z0_head-mlp", "dual_mlp_gno": "rg60_rr10_z0_head-mlp",
+    "dual_small_mlp_bilinear": f"bilinear_{SMALL}_head-mlp", "dual_small_mlp": f"rg60_rr10_{SMALL}_head-mlp",
+    "dual_small_mlp_theta": f"rg60_rr10_phys-theta_{SMALL}_head-mlp",
+    "dual_small_mlp_mountain": f"rg60_rr10_phys-mountain_{SMALL}_head-mlp",
+    "dual_small_mlp_phys": f"rg60_rr10_phys-all_{SMALL}_head-mlp",
+    "dual_w16m4x8_mlp_phys": "rg60_rr10_phys-all_r16m4x8_g16m4x8_z0_head-mlp",
+    "dual_w8m8x16_mlp_phys": "rg60_rr10_phys-all_r8m8x16_g8m8x16_z0_head-mlp",
+    "dual_w8m4x8_mlp_phys": "rg60_rr10_phys-all_r8m4x8_g8m4x8_z0_head-mlp"}
+DUAL_F6 = {  # --configs f6: six-field models (train_dual_gno.py --fields6) and their four-field twins
+    "dual_small_mlp": f"rg60_rr10_{SMALL}_head-mlp", "dual_small_mlp_phys": f"rg60_rr10_phys-all_{SMALL}_head-mlp",
+    "dual_small_mlp_f6": f"rg60_rr10_{SMALL}_head-mlp_f6",
+    "dual_small_mlp_phys_f6": f"rg60_rr10_phys-all_{SMALL}_head-mlp_f6"}
 
 
 def mn_points(step):
@@ -80,7 +101,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--step", type=int, default=2)
     ap.add_argument("--max-inits", type=int, default=0, help="smoke test")
+    ap.add_argument("--configs", default="report", choices=["report", "all", "f6"],
+                    help="f6: the six-field dual models and their four-field twins, on the six-field samples")
+    ap.add_argument("--out", default="grid_eval.npz")
+    ap.add_argument("--case-init", default="", help="evaluate only this test run (e.g. 2025-06-14T12); its +24 h map is the case")
     a = ap.parse_args()
+    cfgs = {"report": DUAL_CFGS, "all": DUAL_ALL, "f6": DUAL_F6}[a.configs]
     dev = torch.device("cuda")
     t0 = time.time()
 
@@ -101,7 +127,7 @@ def main():
     print(f"{P} points (every {a.step} km, land, matched to the 1 km terrain grid)", flush=True)
 
     # ------------------------------------------------------------------ dual data (station stats)
-    D = DualData(dev, phys="all")
+    D = DualData(dev, phys="all", fields6=a.configs == "f6")
     dg = np.load(f"{ROOT}/cache/multimodel_{TAG}.npz", allow_pickle=True)
     dr = np.load(f"{ROOT}/cache/multimodel_{TAG}_lam.npz", allow_pickle=True)
     tr = D.split["train"]
@@ -132,43 +158,68 @@ def main():
     static_z = D._t((tval - st_mu) / st_sd)                                    # (P, 28)
 
     # ------------------------------------------------------------------ dual models
-    models = {}
-    for name, tag in DUAL_CFGS.items():
-        for s in range(3):
+    models, dual_seeds = {}, {}
+    for name, tag in cfgs.items():
+        dual_seeds[name] = [s for s in range(3) if all(
+            (RUNS_DUAL / f"dual_sfno-fno_g{f}_s{s}_{tag}_lr1e-05" / "best.pt").exists() for f in range(5))]
+        for s in dual_seeds[name]:
             for f in range(5):
                 run = RUNS_DUAL / f"dual_sfno-fno_g{f}_s{s}_{tag}_lr1e-05"
                 h = json.load(open(run / "history.json"))["args"]
-                D.n_point = 28 + 8 + 5 + (len(phn) if h["phys"] == "all" else 0)
+                pidx = {"none": [], "all": list(range(len(phn))), "theta": [phn.index(q) for q in THETA],
+                        "mountain": [phn.index(q) for q in MOUNTAIN]}[h["phys"]]
+                D.n_point = 28 + 8 + 5 + len(pidx)
+                # a four-field model on the six-field grids: the first four fields of each model
+                nf = 6 if h.get("fields6") else 4
+                Cg, Cr, F = D.Cg, D.Cr, len(D.fields)
+                D.Cg, D.Cr = D.Cg // F * nf, D.Cr // F * nf
                 m = DualGNO(D, h["enc_g"], h["enc_r"], width=h["width"], width_r=h["width_r"],
                             modes_g=tuple(h.get("modes_g", [16, 32])), modes_r=tuple(h["modes_r"]),
                             rg=h["rg"], rr=h["rr"], branches=h["branches"], readout=h["readout"],
                             wind_frame=h["wind_frame"], dropout=h.get("dropout", 0.0),
                             zero_init=h.get("zero_init", False), head=h.get("head", "linear")).to(dev)
                 m.load_state_dict(torch.load(run / "best.pt", weights_only=True), strict=True)
-                m.uses_phys = h["phys"] == "all"
+                m.phys_idx = pidx
+                m.gch = [i * F + c for i in range(Cg // F) for c in range(nf)] if nf != F else None
+                m.rch = [i * F + c for i in range(Cr // F) for c in range(nf)] if nf != F else None
+                D.Cg, D.Cr = Cg, Cr
                 models.setdefault(name, []).append((s, m.eval()))
     print("dual models loaded", {k: len(v) for k, v in models.items()},
           {k: getattr(v[0][1], "gno_r").n_neighbours for k, v in models.items() if hasattr(v[0][1], "gno_r")},
           flush=True)
 
-    # ------------------------------------------------------------------ station MLP / SFNO (mix)
-    tso.use_group("mix")
-    Dm = tso.Data(dev, terrain=True)
-    assert list(Dm.st_fc.shape[2:3]) == [4] and (Dm.station == dg["station"]).all()
+    # ------------------------------------------------------------------ station models per input group
+    # point-wise MLP / SFNO + MLP (/ FNO + MLP) of train_station_operator.py --inputs terrain, input
+    # group IFS + AIFS ('ecmwf'), MEPS + AROME-Arctic ('lam', 2.5 km grid) and all four ('mix');
+    # baseline: the mean of the group's models. The grids are read per run (need_grid=False).
+    SGROUPS = {"ecmwf": [0, 1], "lam": [2, 3], "mix": [0, 1, 2, 3]} if a.configs == "all" else {"mix": [0, 1, 2, 3]}
+    SKINDS = ("point", "sfno", "fno") if a.configs == "all" else ("point", "sfno")
     sx = {p: tval[:, [tnames.index(f"{p}_{k}") for k in SX_DIRS]] for p in ("sx", "sx10")}
-    mix_models = {}
-    for kind in ("point", "sfno"):
-        for s in range(3):
-            for f in range(5):
-                m = tso.TerrainNet(kind, Dm).to(dev)
-                m.load_state_dict(torch.load(tso.RUNS / f"{kind}_terrain_g{f}_s{s}_mix_lr1e-05" / "best.pt",
-                                             weights_only=True))
-                mix_models.setdefault(kind, []).append((s, m.eval()))
-    fi_m = (lat - Dm.lat[0]) / (Dm.lat[1] - Dm.lat[0])
-    fj_m = (lon - Dm.lon[0]) / (Dm.lon[1] - Dm.lon[0])
-    sample_m = torch.tensor(np.stack([fj_m / (Dm.W - 1) * 2 - 1, fi_m / (Dm.H - 1) * 2 - 1], -1),
-                            dtype=torch.float32, device=dev)
-    print("mix models loaded", flush=True)
+    sdata, smodels = {}, {}
+    for grp, mi in SGROUPS.items():
+        tso.DATA = ROOT / "cache" / f"multimodel_{TAG}"
+        tso.GRID_FILE = ROOT / "cache" / f"multimodel_{TAG}_grid.npy"
+        if grp != "ecmwf":
+            tso.use_group(grp)
+        Dk = tso.Data(dev, terrain=True, need_grid=False)
+        assert Dk.M == len(mi) and (Dk.station == dg["station"]).all()
+        if Dk.km_grid:
+            fi_k, fj_k = (xy[:, 1] - Dk.lat[0]) / (Dk.lat[1] - Dk.lat[0]), (xy[:, 0] - Dk.lon[0]) / (Dk.lon[1] - Dk.lon[0])
+        else:
+            fi_k, fj_k = (lat - Dk.lat[0]) / (Dk.lat[1] - Dk.lat[0]), (lon - Dk.lon[0]) / (Dk.lon[1] - Dk.lon[0])
+        Dk.pt_sample = torch.tensor(np.stack([fj_k / (Dk.W - 1) * 2 - 1, fi_k / (Dk.H - 1) * 2 - 1], -1),
+                                    dtype=torch.float32, device=dev)
+        Dk.pt_terrain = torch.tensor((tval - Dk.st_mu) / Dk.st_sd, dtype=torch.float32, device=dev)
+        sdata[grp] = (Dk, mi)
+        sfx = "" if grp == "ecmwf" else f"_{grp}"
+        for kind in SKINDS:
+            for s in range(3):
+                for f in range(5):
+                    m = tso.TerrainNet(kind, Dk).to(dev)
+                    m.load_state_dict(torch.load(tso.RUNS / f"{kind}_terrain_g{f}_s{s}{sfx}_lr1e-05" / "best.pt",
+                                                 weights_only=True))
+                    smodels.setdefault(f"{kind}_{grp}", []).append((s, m.eval()))
+        print(f"station models loaded: {grp} {Dk.M} models, grid {Dk.H} x {Dk.W} x {Dk.C} fields", flush=True)
 
     # ------------------------------------------------------------------ point geometry for inputs
     lat_c, lon_c = latg, long_
@@ -195,14 +246,21 @@ def main():
     print(f"station check: {st_in.sum()} stations inside the MET Nordic grid", flush=True)
 
     # ------------------------------------------------------------------ loop over test runs
-    test = np.intersect1d(D.split["test"], Dm.split["test"])
+    test = D.split["test"]
+    for Dk, _ in sdata.values():
+        test = np.intersect1d(test, Dk.split["test"])
     if a.max_inits:
         test = test[:a.max_inits]
-    names = ["ifs_aifs", "meps_arome", "four_mean", "mlp", "sfno_mlp"] + list(DUAL_CFGS)
-    seeds = {k: 3 for k in ["mlp", "sfno_mlp"] + list(DUAL_CFGS)}
+    if a.case_init:
+        test = test[pd.DatetimeIndex(D.inits[test]) == pd.Timestamp(a.case_init)]
+        assert len(test) == 1, f"{a.case_init} is not a test run"
+    names = (["raw_ifs", "raw_aifs", "raw_meps", "raw_arome", "ifs_aifs", "meps_arome", "four_mean", "mlp", "sfno_mlp"]
+             + list(smodels) + list(cfgs))
+    seeds = {k: 3 for k in ["mlp", "sfno_mlp"] + list(smodels)}
+    seeds.update({k: len(v) for k, v in dual_seeds.items()})
     se_pt = {k: np.zeros(P) for k in names}
     se_lead = {k: np.zeros(D.L) for k in names}
-    se_seed = {k: np.zeros(3) for k in seeds}
+    se_seed = {k: np.zeros(v) for k, v in seeds.items()}
     cnt_pt, cnt_lead = np.zeros(P), np.zeros(D.L)
     se_sample = {k: np.full((len(test), D.L), np.nan, np.float32) for k in names}
     st_se = {k: 0.0 for k in ("metnordic", "four_mean", "meps_arome", "ifs_aifs")}
@@ -237,33 +295,40 @@ def main():
         nn_, ll = np.full(L, n), np.arange(L)
         xg, xr_, tf, _, uv = D.batch(nn_, ll)
         pt0 = torch.cat([static_z[None].expand(L, -1, -1), D._t(f8_z)], -1)
-        pt1 = torch.cat([pt0, D._t(phys_z)], -1)
-        preds = {"ifs_aifs": fc[:, :2].mean(1), "meps_arome": fc[:, 2:].mean(1), "four_mean": base}
+        phys_t = D._t(phys_z)
+        preds = {"ifs_aifs": fc[:, :2].mean(1), "meps_arome": fc[:, 2:].mean(1), "four_mean": base,
+                 "raw_ifs": fc[:, 0], "raw_aifs": fc[:, 1], "raw_meps": fc[:, 2], "raw_arome": fc[:, 3]}
         uvb = D._t(base)
         with torch.no_grad():
             for name, ms in models.items():
-                acc = np.zeros((3, L, P, 2))
+                sl = dual_seeds[name]
+                acc = np.zeros((len(sl), L, P, 2))
                 for s, m in ms:
-                    acc[s] += m(xg, xr_, tf, pt1 if m.uses_phys else pt0, uvb).float().cpu().numpy() * D.y_std / 5
-                for s in range(3):
-                    se_seed[name][s] += np.nansum(np.sum((base + acc[s] - Y) ** 2, -1))
+                    acc[sl.index(s)] += m(xg if m.gch is None else xg[:, m.gch], xr_ if m.rch is None else xr_[:, m.rch], tf, torch.cat([pt0, phys_t[..., m.phys_idx]], -1) if m.phys_idx else pt0, uvb).float().cpu().numpy() * D.y_std / 5
+                for i in range(len(sl)):
+                    se_seed[name][i] += np.nansum(np.sum((base + acc[i] - Y) ** 2, -1))
                 preds[name] = base + acc.mean(0)
-            # station MLP / SFNO (mix): dyn = 8 winds, speed, upwind sx, sx10
-            u, v = base[..., 0], base[..., 1]
-            dyn = np.concatenate([f8, np.hypot(u, v)[..., None],
-                                  np.stack([upwind(sx[p], u, v) for p in ("sx", "sx10")], -1)], -1)
-            dyn = torch.tensor(((dyn - Dm.dyn_mu) / Dm.dyn_sd).astype(np.float32), device=dev)
-            ptm = torch.cat([dyn, torch.tensor((tval - Dm.st_mu) / Dm.st_sd, dtype=torch.float32,
-                                               device=dev)[None].expand(L, -1, -1)], -1)
-            g, tfm, _ = Dm.batch(nn_, ll, np.zeros((L, Dm.S), bool))
-            for kind, key in (("point", "mlp"), ("sfno", "sfno_mlp")):
-                acc = np.zeros((3, L, P, 2))
-                for s, m in mix_models[kind]:
-                    lt = m.latent(g, tfm)
-                    acc[s] += m.head_at(lt, tfm, ptm, sample_m).float().cpu().numpy() * Dm.y_std / 5
-                for s in range(3):
-                    se_seed[key][s] += np.nansum(np.sum((base + acc[s] - Y) ** 2, -1))
-                preds[key] = base + acc.mean(0)
+            # station models per group: dyn = the group's winds, mean speed, upwind sx, sx10
+            for grp, (Dk, mi) in sdata.items():
+                fcg = fc[:, mi]
+                bg = fcg.mean(1)                                                # (L, P, 2)
+                u, v = bg[..., 0], bg[..., 1]
+                dyn = np.concatenate([fcg.transpose(0, 2, 1, 3).reshape(L, P, -1), np.hypot(u, v)[..., None],
+                                      np.stack([upwind(sx[p], u, v) for p in ("sx", "sx10")], -1)], -1)
+                dyn = torch.tensor(((dyn - Dk.dyn_mu) / Dk.dyn_sd).astype(np.float32), device=dev)
+                ptm = torch.cat([dyn, Dk.pt_terrain[None].expand(L, -1, -1)], -1)
+                tfm = torch.tensor(Dk.time_features(nn_, ll), dtype=torch.float32, device=dev)
+                gr = np.asarray(Dk.grid[n][:, :, Dk.fsel], np.float32).reshape(L, -1, Dk.H, Dk.W)
+                g = torch.tensor((gr - Dk.g_mean) / Dk.g_std, dtype=torch.float32, device=dev)
+                for kind in SKINDS:
+                    key = f"{kind}_{grp}"
+                    acc = np.zeros((3, L, P, 2))
+                    for s, m in smodels[key]:
+                        acc[s] += m.head_at(m.latent(g, tfm), tfm, ptm, Dk.pt_sample).float().cpu().numpy() * Dk.y_std / 5
+                    for s in range(3):
+                        se_seed[key][s] += np.nansum(np.sum((bg + acc[s] - Y) ** 2, -1))
+                    preds[key] = bg + acc.mean(0)
+            preds["mlp"], preds["sfno_mlp"] = preds["point_mix"], preds["sfno_mix"]
         ok_ = np.isfinite(Y).all(-1)                                            # (L, P)
         for k in names:
             e = np.where(ok_, np.sum((preds[k] - Y) ** 2, -1), 0.0)
@@ -293,9 +358,10 @@ def main():
             print(f"{it}/{len(test)} {D.inits[n]} {time.time() - t0:.0f} s  " +
                   "  ".join(f"{k} {v:.3f}" for k, v in rm.items()), flush=True)
 
+    se_seed["mlp"], se_seed["sfno_mlp"] = se_seed["point_mix"].copy(), se_seed["sfno_mix"].copy()
     out = ROOT / "results" / "metnordic"
     out.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(out / "grid_eval.npz", names=np.array(names), lat=lat, lon=lon, xy=xy, elev=elev,
+    np.savez_compressed(out / a.out, names=np.array(names), dual_seeds=json.dumps(dual_seeds), lat=lat, lon=lon, xy=xy, elev=elev,
                         dist_station=dist_st, mn_y=yy, mn_x=xx, step=a.step, leads=D.leads,
                         test_inits=np.array(D.inits[test], dtype="datetime64[h]"),
                         cnt_pt=cnt_pt, cnt_lead=cnt_lead, st_xy=st_xy, st_in=st_in, st_cnt=st_cnt,
@@ -311,7 +377,7 @@ def main():
         extra = (" seeds " + " ".join(f"{np.sqrt(x / tot):.3f}" for x in se_seed[k])) if k in se_seed else ""
         print(f"  {k:22s} {np.sqrt(se_pt[k].sum() / tot):.3f}{extra}")
     print("station check (RMSE vs obs, m/s):", {k: round(np.sqrt(v / st_cnt), 3) for k, v in st_se.items()})
-    print("->", out / "grid_eval.npz", f"{time.time() - t0:.0f} s")
+    print("->", out / a.out, f"{time.time() - t0:.0f} s")
 
 
 if __name__ == "__main__":

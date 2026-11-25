@@ -1,0 +1,13 @@
+period,forecast,"RMSE, all leads",seed s.d.
+original,IFS,3.562,
+original,AIFS,3.541,
+original,MEPS,3.564,
+original,AROME-Arctic,3.552,
+original,MET Nordic analysis,3.117,
+original,ours,3.153,0.007
+extended,IFS,3.772,
+extended,AIFS,3.746,
+extended,MEPS,3.76,
+extended,AROME-Arctic,3.655,
+extended,MET Nordic analysis,3.332,
+extended,ours,3.256,0.009

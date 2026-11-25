@@ -36,17 +36,33 @@ def get(ds, name, static=False):
     return np.ma.filled(np.ma.asarray(a).astype("f4"), np.nan)
 
 
+# --window stations: the 99 Frost stations of Nordland / Troms / Finnmark + 3 cells (717 x 752 cells,
+# 65.1-71.6 N), 10 m wind only, into ROOT/metnordic_st; the rerun v4 archive ends 2025-10, later
+# times come from the operational archive (same 1 km grid).
+WINDOWS = {"reference": (slice(1677, 1991), slice(874, 1217)), "stations": (slice(1343, 2060), slice(750, 1502))}
+URL_OPER = ("https://thredds.met.no/thredds/dodsC/metpparchive/{t:%Y/%m/%d}/"
+            "met_analysis_1_0km_nordic_{t:%Y%m%dT%H}Z.nc")
+
+
+def open_analysis(t):
+    try:
+        return netCDF4.Dataset(URL.format(t=t))
+    except OSError:
+        return netCDF4.Dataset(URL_OPER.format(t=t))
+
+
 def fetch(t: pd.Timestamp, out: Path):
-    ds = netCDF4.Dataset(URL.format(t=t))
+    ds = open_analysis(t)
     try:
         data = {k: get(ds, v) for k, v in FIELDS.items()}
         s, d = get(ds, "wind_speed_10m"), np.deg2rad(get(ds, "wind_direction_10m"))
+        src = ds.filepath()
     finally:
         ds.close()
     data["u10"], data["v10"] = -s * np.sin(d), -s * np.cos(d)
     tmp = out.with_suffix(".tmp")
     xr.Dataset({k: (("y", "x"), a) for k, a in data.items()},
-               attrs={"time": str(t), "source": URL.format(t=t)}
+               attrs={"time": str(t), "source": src}
                ).to_netcdf(tmp, encoding={k: {"zlib": True, "complevel": 3} for k in data})
     tmp.rename(out)
 
@@ -79,7 +95,7 @@ def with_timeout(fn, args, timeout: float = 180.0):
 
 
 def static(out: Path, t: pd.Timestamp):
-    ds = netCDF4.Dataset(URL.format(t=t))
+    ds = open_analysis(t)
     try:
         data = {k: get(ds, k, static=True) for k in ("latitude", "longitude")}
         for k in ("altitude", "land_area_fraction"):
@@ -95,8 +111,15 @@ def main():
     p.add_argument("--start", default="2018-01-01")
     p.add_argument("--end", default="2025-12-31")
     p.add_argument("--hours", type=int, nargs="+", default=[0, 6, 12, 18])
-    p.add_argument("--out", type=Path, default=OUT)
+    p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--window", default="reference", choices=list(WINDOWS),
+                   help="stations: all 99 stations, wind only, default out ROOT/metnordic_st")
     a = p.parse_args()
+    global ROWS, COLS, FIELDS
+    ROWS, COLS = WINDOWS[a.window]
+    if a.window == "stations":
+        FIELDS = {}
+    a.out = a.out or (OUT.with_name("metnordic_st") if a.window == "stations" else OUT)
     times = pd.date_range(a.start, f"{a.end} 23:00", freq="h")
     times = times[times.hour.isin(a.hours)]
     a.out.mkdir(parents=True, exist_ok=True)

@@ -187,10 +187,17 @@ def main():
     p.add_argument("--inits", type=int, nargs="+", default=[0, 12])
     p.add_argument("--leads", type=int, nargs="+", default=list(range(0, 67, 6)))
     p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--fields", nargs="+", default=None,
+                   help="only these fields (e.g. skt), into a separate --out: existing run files are skipped")
     p.add_argument("--box", default="north", choices=sorted(BOXES),
                    help="norway: mainland Norway 57.5-74 N, 4-36 E, into OUT ecmwf_no")
     a = p.parse_args()
     set_box(a.box)
+    if a.fields:
+        global SFC, PL
+        SFC = [f for f in SFC + ["skt"] if f in a.fields]
+        PL = {k: [L for L in v if f"{k}{L}" in a.fields] for k, v in PL.items()}
+        PL = {k: v for k, v in PL.items() if v}
     a.out = a.out or OUT
     d, d1 = date.fromisoformat(a.start), date.fromisoformat(a.end)
     n_ok = n_fail = 0

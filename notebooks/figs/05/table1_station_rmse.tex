@@ -1,0 +1,23 @@
+\begin{table}
+\caption{Vector RMSE (m s$^{-1}$) against the station observations; trained models: mean $\pm$ s.d. over 3 seeds.}
+\begin{tabular}{lcc}
+\toprule
+ & Original period & Extended period \\
+Forecast &  &  \\
+\midrule
+IFS & 3.564 & 3.770 \\
+AIFS & 3.543 & 3.745 \\
+MEPS & 3.567 & 3.755 \\
+AROME-Arctic & 3.555 & 3.651 \\
+mean IFS + AIFS & 3.492 & 3.700 \\
+mean MEPS + AROME & 3.410 & 3.555 \\
+mean of all four & 3.248 & 3.412 \\
+MET Nordic analysis & 3.119 & 3.329 \\
+point-wise MLP & 3.134 ± 0.006 & 3.222 ± 0.004 \\
+dual, 4 fields & 3.155 ± 0.007 & 3.253 ± 0.009 \\
+dual, 6 fields & 3.154 ± 0.008 & 3.256 ± 0.007 \\
+dual + θ + mtn, 4 fields & 3.144 ± 0.001 & 3.253 ± 0.007 \\
+dual + θ + mtn, 6 fields & 3.142 ± 0.009 & 3.254 ± 0.010 \\
+\bottomrule
+\end{tabular}
+\end{table}
