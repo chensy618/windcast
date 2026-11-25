@@ -1,0 +1,15 @@
+\begin{tabular}{lccc}
+\toprule
+Variant & Seeds & RMSE (m\,s$^{-1}$) & $\Delta$RMSE vs WindCast \\
+\midrule
+\textbf{WindCast} & 3 & $3.153 \pm 0.029$ & -- \\
+no global branch & 3 & $3.164 \pm 0.029$ & $+0.011 \pm 0.001$ \\
+no regional branch & 3 & $3.149 \pm 0.029$ & $-0.003 \pm 0.001$ \\
+bilinear readout & 3 & $3.154 \pm 0.029$ & $+0.002 \pm 0.001$ \\
+linear head & 3 & $3.200 \pm 0.030$ & $+0.047 \pm 0.002$ \\
+no zero start & 3 & $3.135 \pm 0.029$ & $-0.017 \pm 0.001$ \\
+no terrain & 3 & $3.202 \pm 0.031$ & $+0.049 \pm 0.002$ \\
++ $\theta$ / mountain features & 3 & $3.142 \pm 0.029$ & $-0.011 \pm 0.001$ \\
+four-model mean (no correction) & 1 & $3.245 \pm 0.031$ & $+0.093 \pm 0.003$ \\
+\bottomrule
+\end{tabular}

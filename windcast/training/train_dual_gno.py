@@ -69,7 +69,7 @@ R_ENCODERS = ["fno", "tfno", "uno", "localno"]
 
 
 class DualData:
-    def __init__(self, device, phys="none", stations="base", models=tuple(MODELS), fields6=False):
+    def __init__(self, device, phys="none", stations="base", models=tuple(MODELS), fields6=False, use_terrain=True):
         # stations 'ext': + the Swedish / Finnish stations (build_multimodel_samples.py --nordic,
         # build_lam_samples.py --stations ext, ...); their spatial groups are 5..7 (groups_for)
         sfx = "" if stations == "base" else f"_{stations}"
@@ -141,6 +141,8 @@ class DualData:
         assert (t["station"] == dg["station"]).all()
         val = t["values"].astype(np.float64)
         self.pt_static = self._t((val - val.mean(0)) / (val.std(0) + 1e-9))
+        if not use_terrain:                                                   # --no-terrain ablation
+            self.pt_static = self.pt_static[:, :0]
         f8 = fc.transpose(0, 1, 3, 2, 4).reshape(N, L, S, -1)                 # (N, L, S, 2M)
         self.pt_fc_mu, self.pt_fc_sd = np.nanmean(f8[tr], (0, 1, 2)), np.nanstd(f8[tr], (0, 1, 2)) + 1e-9
         self.pt_fc = self._z(f8, tr)
@@ -155,7 +157,7 @@ class DualData:
                    "all": names}[phys]
             self.phys_names = sel
             self.pt_phys = self._z(p["values"][..., [names.index(k) for k in sel]], tr)
-        self.n_point = 28 + 2 * len(self.models) + 5 + len(self.phys_names)
+        self.n_point = self.pt_static.shape[1] + 2 * len(self.models) + 5 + len(self.phys_names)
 
     def _t(self, a):
         return torch.tensor(np.asarray(a), dtype=torch.float32, device=self.device)
@@ -375,6 +377,8 @@ def main():
                     help="comma list, subset of ifs,aifs,meps,arome; run name + _m-<models> unless all four")
     ap.add_argument("--stations", default="base", choices=["base", "ext"],
                     help="ext: + the Swedish / Finnish stations (spatial groups 5..7); run name + _ext")
+    ap.add_argument("--no-terrain", action="store_true",
+                    help="ablation: drop the 28 terrain point features T(x); run name + _noterr")
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--bs", type=int, default=16)
@@ -384,7 +388,7 @@ def main():
     rng = np.random.default_rng(a.seed)
     dev = torch.device("cuda")
     models = a.models.split(",")
-    D = DualData(dev, phys=a.phys, stations=a.stations, models=models, fields6=a.fields6)
+    D = DualData(dev, phys=a.phys, stations=a.stations, models=models, fields6=a.fields6, use_terrain=not a.no_terrain)
     assert 0 <= a.fold < D.n_groups
     if len(D.models) < 4:                    # the branches follow the chosen models
         a.branches = "both" if D.msel_g and D.msel_r else ("global" if D.msel_g else "regional")
@@ -419,6 +423,8 @@ def main():
         name += "_m-" + "-".join(D.models)
     if a.fields6:
         name += "_f6"
+    if a.no_terrain:
+        name += "_noterr"
     name += f"_lr{a.lr:g}"
     if a.max_train:
         name += "_smoke"
