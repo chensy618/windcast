@@ -57,7 +57,7 @@ HEADS = {"sfno": "SFNO + MLP", "fno": "FNO + MLP", "point": "MLP"}
 CONFIGS = {f"{g}-{'mlp' if h == 'point' else h}": dict(group=g, head=h, label=f"{HEADS[h]} · {GROUP_LABEL[g]}")
            for g in GROUPS for h in HEADS}
 GROUP_LABEL["dual"] = "IFS + AIFS + MEPS + AROME-Arctic"
-CONFIGS["dual-gno"] = dict(group="dual", head="gno", label=f"WindCast (dual-scale GNO) · {GROUP_LABEL['dual']}")
+CONFIGS["dual-gno"] = dict(group="dual", head="gno", label=f"WindCast · {GROUP_LABEL['dual']}")
 DATA0, GRID0 = tso.DATA, tso.GRID_FILE
 STATIC_VERSION = 3   # bump to rewrite OUT/static
 CROP_SOUTH = 85      # southernmost image rows (km) left blank: the terrain grid has artefacts there

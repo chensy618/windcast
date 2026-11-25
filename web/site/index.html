@@ -8,7 +8,7 @@
 <meta name="description" content="10 m wind forecast for Northern Norway: global and regional forecasts corrected for terrain by neural networks.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 <div class="wrap">
@@ -109,10 +109,10 @@
   <section class="about panel">
     <div>
       <h3>What this is</h3>
-      <p>Windcast corrects global and regional forecasts of the 10 m wind for the local terrain. A neural network (MLP) adds the effect of the terrain at each 1 km cell: height, slope, valleys and shelter from the wind direction.</p>
-      <p><b>WindCast</b>, the first model in the menu, reads all four forecasts (IFS, AIFS, MEPS, AROME-Arctic) at once: one neural operator reads the global fields on the 0.25° grid, another the regional fields on the 2.5 km grid, and a graph neural operator gathers both around each 1 km cell before an MLP adds the terrain. It covers the area of the 2.5 km grid.</p>
-      <p>The other six models: three network types, each run on two sets of input forecasts. <b>MLP</b> looks at each cell on its own. <b>SFNO + MLP</b> and <b>FNO + MLP</b> first read the weather pattern over the whole region on the 0.25° grid with a neural operator (spherical or plain Fourier), then pass it to the MLP.</p>
-      <p>The two input sets are the ECMWF models (IFS + AIFS) and four physical models (IFS + GFS + MEPS + AROME-Arctic); the model menu names both parts, e.g. “SFNO + MLP · IFS + AIFS”. Each model is trained 15 times: five times, each time leaving out a different fifth of the stations, and each of those with three different random starts. The forecast is the average of these 15 copies, and the spread (the shaded band) is how much their wind speeds differ (one standard deviation).</p>
+      <p>Forecasts of the 10 m wind at 1 km, corrected by neural networks for the local terrain.</p>
+      <p><b>WindCast</b> reads IFS, AIFS, MEPS and AROME-Arctic with neural operators and adds the terrain of each cell. It covers the MEPS area.</p>
+      <p>The six other models use one of two input sets (IFS + AIFS, or IFS + GFS + MEPS + AROME-Arctic) with an MLP on the terrain, alone or after an SFNO / FNO on the 0.25° fields.</p>
+      <p>Each forecast is the mean of 15 trained copies (5 station splits × 3 seeds); the shaded band is their spread (1 s.d.).</p>
     </div>
     <div>
       <h3>How good is it</h3>
@@ -122,6 +122,6 @@
   </section>
   <footer class="foot" id="foot"></footer>
 </div>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

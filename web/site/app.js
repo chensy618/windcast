@@ -612,12 +612,17 @@ async function setModel(cfg) {
   await loadConfig(cfg);
   renderAll(); if (S.view === "map") drawMap();
 }
+// table label: the model name, and its input forecasts in small type below ("name · inputs")
+function verifLabel(lab) {
+  const [name, inputs] = lab.split(" · ");
+  return esc(name.replace(/ \(.*\)$/, "")) + (inputs ? `<span class="vt-in">${esc(inputs)}</span>` : "");
+}
 function renderVerif() {
   const v = S.verif; if (!v) return;
   const mean = a => a.reduce((s, x) => s + x, 0) / a.length;
   const st = S.loc && S.loc.kind === "station" && v.stations ? v.stations[S.loc.id] : null;
   const one = st && S.verifScope !== "all";              // this station's numbers
-  const rows = [["IFS + AIFS mean (reference)", null, one ? st.reference : mean(v.rmse_reference)]];
+  const rows = [["IFS + AIFS mean · reference", null, one ? st.reference : mean(v.rmse_reference)]];
   for (const c of ORDER) if (v.configs[c]) rows.push([(S.F.configs[c] || { label: c }).label, c, one ? st[c] : mean(v.configs[c].rmse)]);
   const r2 = x => Math.round(x * 100) / 100;          // the change is computed from the RMSE as shown
   const ref = r2(rows[0][2]);
@@ -629,7 +634,7 @@ function renderVerif() {
     : `Mean over forecast times 0 to 66 h, ${v.n_stations} stations, ${v.period}. Each station is predicted by models trained without it. The hourly values between the 6-hourly model times are interpolated; they keep almost all of the improvement.` +
       (S.loc && S.loc.kind !== "station" ? " Choose a station to see its own numbers." : "");
   $("verif").innerHTML = seg + `<div class="tbl"><table class="vt"><thead><tr><th>Model</th><th class="num">RMSE</th><th class="num">Change</th></tr></thead><tbody>` +
-    rows.map(([lab, c, m]) => { if (m == null) return `<tr><td>${lab}</td><td class="num">–</td><td class="num">–</td></tr>`;
+    rows.map(([lab, c, m]) => { lab = verifLabel(lab); if (m == null) return `<tr><td>${lab}</td><td class="num">–</td><td class="num">–</td></tr>`;
       m = r2(m); const ch = (m / ref - 1) * 100;
       return `<tr class="${c === S.cfg ? "sel" : ""}"><td>${lab}</td><td class="num">${m.toFixed(2)} m/s</td><td class="num">${c ? (ch > 0 ? "+" : "") + ch.toFixed(1) + " %" : "–"}</td></tr>`; }).join("") +
     `</tbody></table></div><p class="hint">${note}</p>`;
