@@ -5,11 +5,10 @@
 Run on a GPU node (web/slurm/realtime.slurm, scheduled by web/slurm/scrontab.txt):
 1. the init: the newest 00 / 12 UTC run at least 7 h old (ECMWF open data is complete by then),
    or --init; if its forecast.json already has every configuration, only the observations update;
-2. downloads into ROOT (skipping existing files): IFS and AIFS (ECMWF open data), GFS (NOAA AWS),
+2. downloads into ROOT (skipping existing files): IFS and AIFS (ECMWF open data),
    MEPS and AROME-Arctic (MET Norway thredds, archive or "latest" catalogue), 0-66 h every 6 h;
-3. web/pipeline/forecast.py for the configurations whose inputs exist (nwp-* need all four NWP
-   models, dual-gno IFS, AIFS, MEPS and AROME-Arctic; if one is missing the ECMWF configurations
-   are still published);
+3. web/pipeline/forecast.py for the configurations whose inputs exist (dual-gno needs IFS, AIFS,
+   MEPS and AROME-Arctic; if one is missing the ECMWF configurations are still published);
 4. web/pipeline/observations.py, runs/index.json (newest first) and the deletion of older runs;
 5. if WINDCAST_DEPLOY is set, it is run as a shell command afterwards (e.g. an rsync of OUT to
    the web server).
@@ -28,9 +27,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO), str(REPO / "scripts")]
 from build_group_samples import path as group_path  # noqa: E402
 
-GROUPS = {"ecmwf": ["ifs", "aifs"], "nwp": ["ifs", "gfs", "meps", "arome_arctic"],
+GROUPS = {"ecmwf": ["ifs", "aifs"],
           "dual": ["ifs", "aifs", "meps", "arome_arctic"]}          # dual-gno: WindCast (web/pipeline/dual.py)
-N_CONFIGS = 7
+N_CONFIGS = 4
 LEADS6 = [str(x) for x in range(0, 67, 6)]
 
 
@@ -46,8 +45,7 @@ def download(init):
     d, h = f"{init:%Y-%m-%d}", str(init.hour)
     for m in ("ifs", "aifs"):
         sh("scripts/download_ecmwf.py", "--model", m, "--start", d, "--end", d, "--inits", h)
-    sh("scripts/download_gfs.py", "--start", d, "--end", d, "--inits", h)
-    # the whole 1 km map (--window grid), so that the NWP configurations cover all of it
+    # the whole 1 km map (--window grid)
     sh("scripts/download_meps.py", "--start", d, "--end", d, "--inits", h, "--leads", *LEADS6, "--window", "grid",
        "--max-wait-h", "1")
     sh("scripts/download_meps.py", "--model", "arome_arctic", "--start", d, "--end", d, "--inits", h, "--leads", *LEADS6,

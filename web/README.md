@@ -30,16 +30,14 @@ web/
 | id | input forecasts | network |
 |---|---|---|
 | `dual-gno` | IFS, AIFS, MEPS, AROME-Arctic | WindCast: SFNO (0.25°) + FNO (2.5 km) encoders, GNO readout 60 / 10 km, MLP head |
-| `nwp-mlp` | IFS, GFS, MEPS, AROME-Arctic | MLP head on the 1 km terrain descriptors |
-| `nwp-sfno` | IFS, GFS, MEPS, AROME-Arctic | SFNO on the 0.25° fields + MLP head |
-| `nwp-fno` | IFS, GFS, MEPS, AROME-Arctic | FNO on the 0.25° fields + MLP head |
 | `ecmwf-sfno` | IFS, AIFS | SFNO + MLP head |
 | `ecmwf-mlp` | IFS, AIFS | MLP head |
 | `ecmwf-fno` | IFS, AIFS | FNO + MLP head |
 
 Each is the mean of the 15 trained models (5 held-out station groups x 3 seeds) of
-`windcast/training/train_station_operator.py --inputs terrain --lr 1e-5 [--group nwp]`.
-The `nwp-*` forecasts exist only inside the MEPS window (about 70 % of the map).
+`windcast/training/train_station_operator.py --inputs terrain --lr 1e-5`. GFS is not used: the
+IFS + GFS + MEPS + AROME-Arctic models (`--group nwp`) are no longer published (add `"nwp"` back to
+`GROUPS` in `forecast.py` and `run_latest.py` to restore them).
 
 `dual-gno` is the four-field dual-scale GNO of `windcast/training/train_dual_gno.py` (run tag
 `rg60_rr10_r16m8x16_g16m8x16_z0_head-mlp`), trained on the extended period (2024-03 .. 2025-12,
@@ -60,9 +58,9 @@ python web/pipeline/dual.py --prepare               # after retraining WindCast
 python web/pipeline/verification.py                 # after retraining
 ```
 
-A cycle takes about 6 minutes on one GPU. It downloads the run (ECMWF open data, NOAA GFS on
-AWS, MET Norway thredds), runs `forecast.py` for the configurations whose inputs exist (if one
-NWP model is missing, the ECMWF configurations are still published), refreshes the
+A cycle takes about 6 minutes on one GPU. It downloads the run (ECMWF open data, MET Norway
+thredds), runs `forecast.py` for the configurations whose inputs exist (if MEPS or AROME-Arctic
+is missing, the ECMWF configurations are still published), refreshes the
 observations, keeps the newest 4 runs and rewrites `runs/index.json`.
 
 Requirements on the cluster: the training caches and runs under
@@ -97,5 +95,5 @@ export WINDCAST_DEPLOY='rsync -a --delete web/site/ user@server:/var/www/windcas
 ```
 
 The page loads three.js r128 from cdnjs and OrbitControls from jsDelivr when the 3D view is
-first opened, and the fonts from Google Fonts. `data/` is about 45 MB per run, mostly the
+first opened, and the fonts from Google Fonts. `data/` is about 20 MB per run, mostly the
 lossless WebP map images (R = corrected speed / 0.2 m/s, G = uncorrected speed, B = direction).

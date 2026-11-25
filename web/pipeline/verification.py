@@ -2,10 +2,10 @@
 
     python web/pipeline/verification.py --out web/site/data       # once, after training
 
-Test period 2025-04-01 .. 2025-09-12, runs present in both the ECMWF and the NWP samples; every
+Test period 2025-04-01 .. 2025-09-12, runs of the IFS + AIFS samples; every
 station is predicted by the models that did not see its station group (3 seeds, mean RMSE).
 Vector RMSE of (u, v) against the observations; change in % against the IFS + AIFS mean (negative
-= better). Also the uncorrected NWP 4-model mean.
+= better).
 dual-gno (WindCast): the original-period twin of the deployed model (same run tag, trained on
 2024-03 .. 2024-12, runs_dual), so that it is scored on the same test period as the others; its
 baseline is the IFS + AIFS + MEPS + AROME-Arctic mean.
@@ -35,13 +35,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=REPO / "web" / "site" / "data")
     a = ap.parse_args()
-    e, n = (dict(np.load(f"{TAG}{s}.npz", allow_pickle=True)) for s in ("", "_nwp"))
+    e = dict(np.load(f"{TAG}.npz", allow_pickle=True))
     inits, leads = pd.DatetimeIndex(e["inits"]), [int(x) for x in e["leads"]]
     ti = pd.Index(e["time"]).get_indexer(inits)
     obs = np.stack([e["obs"][ti + ld] for ld in leads], 1)
-    te = (inits >= "2025-04-01") & (inits <= pd.Timestamp("2025-09-12 12:00")) & e["keep"] & n["keep"]
+    te = (inits >= "2025-04-01") & (inits <= pd.Timestamp("2025-09-12 12:00")) & e["keep"]
     groups = station_groups(e["xy"].astype(float))
-    base = {"ecmwf": e["st_fc"].mean(2), "nwp": n["st_fc"].mean(2)}
+    base = {"ecmwf": e["st_fc"].mean(2)}
 
     def rmse(p):
         m = te[:, None, None] & np.isfinite(obs[..., 0]) & np.isfinite(p[..., 0])
@@ -60,9 +60,7 @@ def main():
     r0 = rmse(base["ecmwf"])
     out = {"leads": leads, "period": "2025-04-01 to 2025-09-12", "n_stations": int(len(groups)),
            "reference": "IFS + AIFS mean", "rmse_reference": r0.round(3).tolist(), "configs": {}}
-    rn = rmse(base["nwp"])
-    out["configs"]["nwp-raw"] = dict(rmse=rn.round(3).tolist(), change_pct=((rn / r0 - 1) * 100).round(2).tolist())
-    for g in ("ecmwf", "nwp"):
+    for g in ("ecmwf",):
         for h, name in (("sfno", "sfno"), ("fno", "fno"), ("point", "mlp")):
             rs, ss = [], []
             for s in range(3):

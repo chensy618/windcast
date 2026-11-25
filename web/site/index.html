@@ -111,7 +111,7 @@
       <h3>What this is</h3>
       <p>Forecasts of the 10 m wind at 1 km, corrected by neural networks for the local terrain.</p>
       <p><b>WindCast</b> reads IFS, AIFS, MEPS and AROME-Arctic with neural operators and adds the terrain of each cell. It covers the MEPS area.</p>
-      <p>The six other models use one of two input sets (IFS + AIFS, or IFS + GFS + MEPS + AROME-Arctic) with an MLP on the terrain, alone or after an SFNO / FNO on the 0.25° fields.</p>
+      <p>The three other models use IFS + AIFS only: an MLP on the terrain, alone or after an SFNO / FNO on the 0.25° fields.</p>
       <p>Each forecast is the mean of 15 trained copies (5 station splits × 3 seeds); the shaded band is their spread (1 s.d.).</p>
     </div>
     <div>
@@ -122,6 +122,6 @@
   </section>
   <footer class="foot" id="foot"></footer>
 </div>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

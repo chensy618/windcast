@@ -25,8 +25,8 @@ const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)")
 const D2R = Math.PI / 180;
 
 // model order on the page: the best verified first within each input group
-const ORDER = ["dual-gno", "nwp-mlp", "nwp-sfno", "nwp-fno", "ecmwf-sfno", "ecmwf-mlp", "ecmwf-fno"];
-const CFG_COLORS = { "dual-gno": "#eb6834", "nwp-mlp": "#0b6aa2", "nwp-sfno": "#2a9d8f", "nwp-fno": "#7cb518", "ecmwf-sfno": "#c0392b", "ecmwf-mlp": "#e67e22", "ecmwf-fno": "#8e44ad" };
+const ORDER = ["dual-gno", "ecmwf-sfno", "ecmwf-mlp", "ecmwf-fno"];
+const CFG_COLORS = { "dual-gno": "#eb6834", "ecmwf-sfno": "#c0392b", "ecmwf-mlp": "#e67e22", "ecmwf-fno": "#8e44ad" };
 const PLACES = [["Tromsø", 69.649, 18.956], ["Bodø", 67.280, 14.405], ["Narvik", 68.438, 17.427], ["Harstad", 68.799, 16.541],
   ["Alta", 69.969, 23.272], ["Hammerfest", 70.663, 23.682], ["Vadsø", 70.074, 29.749], ["Kirkenes", 69.727, 30.045],
   ["Mo i Rana", 66.313, 14.142], ["Svolvær", 68.234, 14.568], ["Finnsnes", 69.230, 17.981], ["Mosjøen", 65.837, 13.190],
@@ -659,7 +659,7 @@ async function loadRun(run) {
     setStation(st, false);
   } else renderAll();
   $("foot").textContent = `Run ${fmtRun.format(new Date(S.F.init))} UTC, made ${fmtRun.format(new Date(S.F.created))} UTC. Times are Norwegian time. ` +
-    `Observations: MET Norway (Frost). Input forecasts: ECMWF open data (IFS, AIFS), NOAA GFS, MET Norway (MEPS, AROME-Arctic). ECMWF and MET Norway data are licensed under CC BY 4.0.`;
+    `Observations: MET Norway (Frost). Input forecasts: ECMWF open data (IFS, AIFS), MET Norway (MEPS, AROME-Arctic). ECMWF and MET Norway data are licensed under CC BY 4.0.`;
   if (S.view === "map") drawMap();
   await loadConfig(S.cfg);
   renderAll(); if (S.view === "map") drawMap();

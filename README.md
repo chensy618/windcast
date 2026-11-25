@@ -53,7 +53,6 @@ by less than the seed spread. Starting from the four-model mean gives no gain.
 
 - Forecasts:
   - ECMWF IFS and AIFS open data (CC BY 4.0).
-  - NOAA GFS.
   - MET Norway MEPS and AROME-Arctic (CC BY 4.0).
 - Observations and analysis: MET Norway Frost station observations and the MET Nordic analysis
   (CC BY 4.0).

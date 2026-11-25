@@ -2,10 +2,11 @@
 
     python web/pipeline/forecast.py --init 2026-11-18T12 --out web/site/data
 
-Configurations (CONFIGS): two input groups x three heads, all trained with the 1 km terrain
-descriptors (windcast/training/train_station_operator.py --inputs terrain --lr 1e-5):
+Configurations (CONFIGS), trained with the 1 km terrain descriptors
+(windcast/training/train_station_operator.py --inputs terrain --lr 1e-5):
     ecmwf-*  IFS + AIFS                         (runs <model>_terrain_g<k>_s<s>_lr1e-05)
-    nwp-*    IFS + GFS + MEPS + AROME-Arctic    (runs <model>_terrain_g<k>_s<s>_nwp_lr1e-05)
+The IFS + GFS + MEPS + AROME-Arctic group ("nwp", runs ..._nwp_lr1e-05) is no longer published:
+GFS is not used on the website; add "nwp" back to GROUPS to restore it.
     *-sfno / *-fno: operator on the 0.25 deg fields + MLP head; *-mlp: MLP head only.
     dual-gno WindCast: the four-field dual-scale GNO (IFS + AIFS + MEPS + AROME-Arctic), see dual.py
 Each configuration is the mean of 15 models (5 station groups x 3 seeds); the spread is the std
@@ -51,7 +52,7 @@ import dual  # noqa: E402  (web/pipeline/dual.py: WindCast, the four-field dual-
 
 ROOT = tso.ROOT
 ECMWF_FIELDS = ["10u", "10v", "2t", "msl", "sp", "t850"]
-GROUPS = {"ecmwf": ["ifs", "aifs"], "nwp": ["ifs", "gfs", "meps", "arome_arctic"]}
+GROUPS = {"ecmwf": ["ifs", "aifs"]}             # + "nwp": ["ifs", "gfs", "meps", "arome_arctic"] (not published)
 GROUP_LABEL = {"ecmwf": "IFS + AIFS", "nwp": "IFS + GFS + MEPS + AROME-Arctic"}
 HEADS = {"sfno": "SFNO + MLP", "fno": "FNO + MLP", "point": "MLP"}
 CONFIGS = {f"{g}-{'mlp' if h == 'point' else h}": dict(group=g, head=h, label=f"{HEADS[h]} · {GROUP_LABEL[g]}")
