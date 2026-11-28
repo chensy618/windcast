@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Windcast</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="10 m wind forecast for Northern Norway: global and regional forecasts corrected for terrain by neural networks.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css?v=6">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Windcast <small>10 m wind</small></h1>
+    <div class="run-pick">
+      <label for="run">Forecast run</label>
+      <select id="run"></select>
+    </div>
+  </header>
+
+  <section class="loc" aria-label="Location">
+    <div class="loc-top">
+      <div class="loc-title">
+        <div class="name-row">
+          <h2 id="loc-name">Loading…</h2>
+          <button type="button" id="locate" class="locate" aria-label="Use my location" title="Use my location">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span>My location</span>
+          </button>
+        </div>
+        <div class="sub" id="loc-sub"></div>
+        <div class="warn" id="loc-warn" hidden></div>
+        <div class="sub locate-msg" id="locate-msg" role="status" hidden></div>
+      </div>
+      <div class="search">
+        <input id="q" list="stations" placeholder="Search a station" autocomplete="off" aria-label="Search a station">
+        <datalist id="stations"></datalist>
+      </div>
+    </div>
+    <div class="model-pick">
+      <label for="model">Model</label>
+      <select id="model"></select>
+      <span class="model-note" id="model-note"></span>
+    </div>
+    <div class="now" id="now"></div>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-table" aria-selected="true" data-view="table">Table</button>
+    <button role="tab" id="tab-graph" aria-selected="false" data-view="graph">Graph</button>
+    <button role="tab" id="tab-map" aria-selected="false" data-view="map">Map</button>
+  </nav>
+
+  <section class="panel" id="view-table">
+    <div class="tbl"><table id="tbl"></table></div>
+    <p class="msg" id="tbl-msg" hidden></p>
+  </section>
+
+  <section class="panel" id="view-graph" hidden>
+    <div class="graph-top">
+      <div class="legend" id="legend"></div>
+      <label class="check" id="all-wrap"><input type="checkbox" id="all-models"> Show all models</label>
+    </div>
+    <div class="chart-wrap" id="chart"></div>
+  </section>
+
+  <section class="panel" id="view-map" hidden>
+    <div class="map-ctl">
+      <div class="seg" role="group" aria-label="Map view">
+        <button data-dim="2d" aria-pressed="true">2D</button>
+        <button data-dim="3d" aria-pressed="false">3D</button>
+      </div>
+    </div>
+    <div class="player">
+      <button id="play" class="play" aria-label="Play">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path id="play-icon" d="M6 4 L16 10 L6 16 Z"/></svg>
+      </button>
+      <input type="range" id="lead" min="0" max="11" value="0" step="1" aria-label="Forecast time">
+      <output id="lead-out"></output>
+    </div>
+    <div class="map" id="map">
+      <div class="map-inner" id="map-inner">
+        <canvas id="c-wind"></canvas><canvas id="c-coast"></canvas><canvas id="c-particles"></canvas><div id="labels" class="labels"></div><canvas id="c-top" class="top"></canvas>
+      </div>
+      <div id="map3d" hidden></div>
+      <div class="map-btns">
+        <button id="map-full" class="mbtn" aria-label="Open the full map" title="Open the full map">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path id="map-full-icon" d="M3 8V3h5M12 3h5v5M17 12v5h-5M8 17H3v-5"/></svg>
+        </button>
+        <div class="zoom" id="map-zoom" hidden>
+          <button id="zoom-in" class="mbtn" aria-label="Zoom in" title="Zoom in"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button>
+          <button id="zoom-out" class="mbtn" aria-label="Zoom out" title="Zoom out"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12"/></svg></button>
+          <button id="zoom-reset" class="mbtn" aria-label="Show the whole map" title="Show the whole map"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4h12v12H4z"/></svg></button>
+        </div>
+      </div>
+      <div class="map-card" id="map-card" hidden>
+        <div><b id="card-name"></b><div id="card-val"></div></div>
+        <button id="card-go" class="card-go">Show forecast</button>
+      </div>
+      <div class="tip" id="map-tip" hidden></div>
+      <div class="map-msg" id="map-msg" hidden></div>
+    </div>
+    <div class="scale"><span class="scale-k">Wind speed</span><div class="scale-bar"><canvas id="scale" width="300" height="12"></canvas><div class="scale-ticks" id="scale-ticks"></div></div><span class="scale-k">m/s</span><span class="scale-note" id="scale-note" hidden></span></div>
+    <p class="hint" id="map-hint">Click anywhere on land to get the forecast for that 1 km cell. White dots are the 99 weather stations the models learned from.</p>
+  </section>
+
+  <section class="about panel">
+    <div>
+      <h3>What this is</h3>
+      <p>Forecasts of the 10 m wind at 1 km, corrected for the local terrain by neural operators and neural networks.</p>
+      <p><b>WindCast</b> reads IFS, AIFS, MEPS and AROME-Arctic with neural operators and adds the terrain of each cell. It covers the MEPS area.</p>
+      <p>The three other models use IFS + AIFS only: an MLP on the terrain, alone or after an SFNO / FNO on the 0.25° fields.</p>
+      <p>Each forecast is the mean of 15 trained copies (5 station splits × 3 seeds); the shaded band is their spread (1 s.d.).</p>
+    </div>
+    <div>
+      <h3>How good is it</h3>
+      <p>Error of the wind (vector RMSE) at stations the models never saw in training, against the IFS + AIFS mean. Lower is better. Switch between the chosen station and all stations.</p>
+      <div id="verif"></div>
+    </div>
+  </section>
+  <footer class="foot" id="foot"></footer>
+</div>
+<script src="app.js?v=8"></script>
+</body>
+</html>
